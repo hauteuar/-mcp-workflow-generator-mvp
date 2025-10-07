@@ -3,51 +3,66 @@ import { Plus, Calendar, BarChart3, CheckCircle2, Circle, Trash2, Edit2, Upload,
 import * as XLSX from 'xlsx';
 
 const ProjectManager = () => {
-  const [projects, setProjects] = useState([
-    {
-      id: 1,
-      name: 'Website Redesign',
-      description: 'Complete overhaul of company website',
-      startDate: '2025-10-01',
-      endDate: '2025-12-31',
-      status: 'in-progress',
-      tasks: [
-        { 
-          id: 1, 
-          name: 'Research & Planning', 
-          status: 'review', 
-          priority: 'high', 
-          startDate: '2025-10-01', 
-          endDate: '2025-10-15', 
-          assignee: 'John',
-          comments: [],
-          jira: null
-        },
-        { 
-          id: 2, 
-          name: 'Design Mockups', 
-          status: 'in-progress', 
-          priority: 'high', 
-          startDate: '2025-10-16', 
-          endDate: '2025-11-15', 
-          assignee: 'Sarah',
-          comments: [],
-          jira: null
-        },
-        { 
-          id: 3, 
-          name: 'Development', 
-          status: 'pending', 
-          priority: 'medium', 
-          startDate: '2025-11-16', 
-          endDate: '2025-12-20', 
-          assignee: 'Mike',
-          comments: [],
-          jira: null
-        },
-      ]
+  // Load data from localStorage or use default
+  const loadData = () => {
+    try {
+      const savedProjects = localStorage.getItem('projectManagerData');
+      if (savedProjects) {
+        return JSON.parse(savedProjects);
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
     }
-  ]);
+    
+    // Default sample data
+    return [
+      {
+        id: 1,
+        name: 'Website Redesign',
+        description: 'Complete overhaul of company website',
+        startDate: '2025-10-01',
+        endDate: '2025-12-31',
+        status: 'in-progress',
+        tasks: [
+          { 
+            id: 1, 
+            name: 'Research & Planning', 
+            status: 'review', 
+            priority: 'high', 
+            startDate: '2025-10-01', 
+            endDate: '2025-10-15', 
+            assignee: 'John',
+            comments: [],
+            jira: null
+          },
+          { 
+            id: 2, 
+            name: 'Design Mockups', 
+            status: 'in-progress', 
+            priority: 'high', 
+            startDate: '2025-10-16', 
+            endDate: '2025-11-15', 
+            assignee: 'Sarah',
+            comments: [],
+            jira: null
+          },
+          { 
+            id: 3, 
+            name: 'Development', 
+            status: 'pending', 
+            priority: 'medium', 
+            startDate: '2025-11-16', 
+            endDate: '2025-12-20', 
+            assignee: 'Mike',
+            comments: [],
+            jira: null
+          },
+        ]
+      }
+    ];
+  };
+
+  const [projects, setProjects] = useState(loadData());
 
   const [activeView, setActiveView] = useState('dashboard');
   const [selectedProject, setSelectedProject] = useState(null);
@@ -89,6 +104,59 @@ const ProjectManager = () => {
 
   const [newComment, setNewComment] = useState('');
   const [postToJira, setPostToJira] = useState(false);
+  const [syncMode, setSyncMode] = useState('local'); // 'local' or 'cloud'
+  const [cloudConfig, setCloudConfig] = useState({
+    enabled: false,
+    apiUrl: '',
+    apiKey: '',
+    teamId: ''
+  });
+  const [showCloudSettingsModal, setShowCloudSettingsModal] = useState(false);
+
+  // Save data to localStorage whenever projects change
+  React.useEffect(() => {
+    if (syncMode === 'local') {
+      try {
+        localStorage.setItem('projectManagerData', JSON.stringify(projects));
+      } catch (error) {
+        console.error('Error saving data:', error);
+      }
+    } else if (syncMode === 'cloud' && cloudConfig.enabled) {
+      // Auto-save to cloud
+      syncToCloud();
+    }
+  }, [projects, syncMode]);
+
+  // Load Jira config from localStorage
+  const loadJiraConfig = () => {
+    try {
+      const savedConfig = localStorage.getItem('jiraConfig');
+      if (savedConfig) {
+        return JSON.parse(savedConfig);
+      }
+    } catch (error) {
+      console.error('Error loading Jira config:', error);
+    }
+    return {
+      url: '',
+      email: '',
+      apiToken: '',
+      defaultProject: '',
+      autoSync: false,
+      connected: false
+    };
+  };
+
+  
+
+  // Save Jira config whenever it changes
+  React.useEffect(() => {
+    try {
+      localStorage.setItem('jiraConfig', JSON.stringify(jiraConfig));
+    } catch (error) {
+      console.error('Error saving Jira config:', error);
+    }
+  }, [jiraConfig]);
 
   const addProject = () => {
     if (newProject.name && newProject.startDate && newProject.endDate) {
@@ -424,6 +492,151 @@ const ProjectManager = () => {
 
   const stats = getTaskStats();
 
+  const clearAllData = () => {
+    if (window.confirm('Are you sure you want to clear all data? This cannot be undone!')) {
+      localStorage.removeItem('projectManagerData');
+      localStorage.removeItem('jiraConfig');
+      window.location.reload();
+    }
+  };
+
+  const exportData = () => {
+    const dataToExport = {
+      projects: projects,
+      jiraConfig: jiraConfig,
+      exportDate: new Date().toISOString()
+    };
+    
+    const dataStr = JSON.stringify(dataToExport, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(dataBlob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `project-manager-backup-${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importData = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (data.projects) {
+          setProjects(data.projects);
+          if (data.jiraConfig) {
+            setJiraConfig(data.jiraConfig);
+          }
+          alert('Data imported successfully!');
+        } else {
+          alert('Invalid backup file format');
+        }
+      } catch (error) {
+        alert('Error importing data: ' + error.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Cloud sync functions
+  const syncToCloud = async () => {
+    if (!cloudConfig.enabled || !cloudConfig.apiUrl) return;
+    
+    try {
+      const response = await fetch(`${cloudConfig.apiUrl}/projects`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': cloudConfig.apiKey,
+          'X-Team-ID': cloudConfig.teamId
+        },
+        body: JSON.stringify({ projects })
+      });
+      
+      if (response.ok) {
+        console.log('Data synced to cloud');
+      } else {
+        console.error('Failed to sync to cloud');
+      }
+    } catch (error) {
+      console.error('Cloud sync error:', error);
+    }
+  };
+
+  const syncFromCloud = async () => {
+    if (!cloudConfig.enabled || !cloudConfig.apiUrl) {
+      alert('Please configure cloud settings first');
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${cloudConfig.apiUrl}/projects`, {
+        method: 'GET',
+        headers: {
+          'X-API-Key': cloudConfig.apiKey,
+          'X-Team-ID': cloudConfig.teamId
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.projects) {
+          setProjects(data.projects);
+          alert('Data synced from cloud successfully!');
+        }
+      } else {
+        alert('Failed to sync from cloud');
+      }
+    } catch (error) {
+      alert('Cloud sync error: ' + error.message);
+    }
+  };
+
+  const shareViaLink = () => {
+    const shareData = {
+      projects: projects,
+      sharedDate: new Date().toISOString()
+    };
+    
+    const dataStr = JSON.stringify(shareData);
+    const encoded = btoa(dataStr);
+    const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encoded}`;
+    
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      alert('Share link copied to clipboard! Send this link to your team members.');
+    }).catch(() => {
+      prompt('Copy this link to share with your team:', shareUrl);
+    });
+  };
+
+  // Check for shared data in URL
+  React.useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sharedData = urlParams.get('share');
+    
+    if (sharedData) {
+      try {
+        const decoded = atob(sharedData);
+        const data = JSON.parse(decoded);
+        
+        if (window.confirm('Do you want to import shared project data?')) {
+          if (data.projects) {
+            setProjects(data.projects);
+            alert('Shared data imported successfully!');
+          }
+        }
+        
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (error) {
+        console.error('Error importing shared data:', error);
+      }
+    }
+  }, []);
+
   const renderDashboard = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -688,14 +901,63 @@ const ProjectManager = () => {
     <div className="min-h-screen bg-gray-50 pb-20">
       <div className="bg-white border-b border-gray-200 p-4 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto flex justify-between items-center flex-wrap gap-2">
-          <h1 className="text-2xl font-bold text-gray-800">Project Manager</h1>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Project Manager</h1>
+            <div className="text-xs text-gray-500 mt-1">
+              Mode: {syncMode === 'local' ? '💾 Local Storage' : '☁️ Cloud Sync'}
+              {cloudConfig.enabled && ` (Team: ${cloudConfig.teamId})`}
+            </div>
+          </div>
           <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={shareViaLink}
+              className="bg-cyan-600 text-white px-4 py-2 rounded-lg hover:bg-cyan-700 flex items-center gap-2"
+              title="Share via Link"
+            >
+              <Link2 size={20} />
+              Share Link
+            </button>
+            {cloudConfig.enabled && (
+              <button
+                onClick={syncFromCloud}
+                className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700 flex items-center gap-2"
+                title="Sync from Cloud"
+              >
+                <RefreshCw size={20} />
+                Sync
+              </button>
+            )}
+            <button
+              onClick={exportData}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2"
+              title="Export/Backup Data"
+            >
+              <Upload size={20} />
+              Export
+            </button>
+            <label className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 flex items-center gap-2 cursor-pointer" title="Import/Restore Data">
+              <Upload size={20} />
+              Import
+              <input
+                type="file"
+                accept=".json"
+                onChange={importData}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={() => setShowCloudSettingsModal(true)}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center gap-2"
+            >
+              <Settings size={20} />
+              Team Sync
+            </button>
             <button
               onClick={() => setShowJiraSettingsModal(true)}
               className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 flex items-center gap-2"
             >
               <Settings size={20} />
-              {jiraConfig.connected ? 'Jira Settings' : 'Connect Jira'}
+              Jira
             </button>
             <button
               onClick={() => setShowProjectModal(true)}
@@ -1148,6 +1410,207 @@ const ProjectManager = () => {
             >
               Close
             </button>
+            
+            <button
+              onClick={clearAllData}
+              className="w-full mt-2 bg-red-100 text-red-700 px-4 py-2 rounded-lg hover:bg-red-200 text-sm"
+            >
+              Clear All Data
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showCloudSettingsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Team Collaboration Settings</h2>
+            
+            <div className="space-y-6">
+              {/* Sync Mode Selection */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h3 className="font-semibold text-blue-900 mb-3">Choose Collaboration Method</h3>
+                <div className="space-y-3">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="syncMode"
+                      value="local"
+                      checked={syncMode === 'local'}
+                      onChange={(e) => setSyncMode(e.target.value)}
+                      className="mt-1"
+                    />
+                    <div>
+                      <div className="font-semibold">💾 Local Storage (Default)</div>
+                      <div className="text-sm text-gray-600">Data stored on your computer only. Use Export/Import or Share Link to collaborate.</div>
+                    </div>
+                  </label>
+                  
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="syncMode"
+                      value="cloud"
+                      checked={syncMode === 'cloud'}
+                      onChange={(e) => setSyncMode(e.target.value)}
+                      className="mt-1"
+                    />
+                    <div>
+                      <div className="font-semibold">☁️ Cloud Sync (Team Collaboration)</div>
+                      <div className="text-sm text-gray-600">Real-time sync with your team. Requires backend server setup.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Collaboration Methods */}
+              <div className="space-y-4">
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    <Link2 size={18} className="text-cyan-600" />
+                    Method 1: Share Link (Instant, One-time)
+                  </h4>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Click "Share Link" button in the header to generate a URL with your current data. 
+                    Send this link to team members - they can import your data instantly.
+                  </p>
+                  <div className="bg-gray-50 p-3 rounded text-sm">
+                    <strong>Pros:</strong> Instant, no setup needed<br/>
+                    <strong>Cons:</strong> One-time share, not real-time
+                  </div>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    <Upload size={18} className="text-green-600" />
+                    Method 2: Export/Import Files
+                  </h4>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Export your data as JSON file and share via email/Slack. 
+                    Team members import the file to get your latest data.
+                  </p>
+                  <div className="bg-gray-50 p-3 rounded text-sm">
+                    <strong>Pros:</strong> Works everywhere, can version control<br/>
+                    <strong>Cons:</strong> Manual process, file transfers needed
+                  </div>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h4 className="font-semibold mb-2 flex items-center gap-2">
+                    <RefreshCw size={18} className="text-indigo-600" />
+                    Method 3: Cloud Backend (Real-time Sync)
+                  </h4>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Connect to a shared backend server. All team members see the same data in real-time.
+                  </p>
+                  
+                  {syncMode === 'cloud' && (
+                    <div className="space-y-3 mt-4">
+                      <div>
+                        <label className="block text-sm font-semibold mb-1">Backend API URL</label>
+                        <input
+                          type="text"
+                          value={cloudConfig.apiUrl}
+                          onChange={(e) => setCloudConfig({...cloudConfig, apiUrl: e.target.value})}
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                          placeholder="http://your-server.com/api"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold mb-1">API Key (Optional)</label>
+                        <input
+                          type="password"
+                          value={cloudConfig.apiKey}
+                          onChange={(e) => setCloudConfig({...cloudConfig, apiKey: e.target.value})}
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                          placeholder="Your API key"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold mb-1">Team ID</label>
+                        <input
+                          type="text"
+                          value={cloudConfig.teamId}
+                          onChange={(e) => setCloudConfig({...cloudConfig, teamId: e.target.value})}
+                          className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                          placeholder="your-team-name"
+                        />
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCloudConfig({...cloudConfig, enabled: true});
+                          alert('Cloud sync enabled! Data will sync automatically.');
+                        }}
+                        className="w-full bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700"
+                      >
+                        Enable Cloud Sync
+                      </button>
+                    </div>
+                  )}
+                  
+                  <div className="bg-gray-50 p-3 rounded text-sm mt-3">
+                    <strong>Pros:</strong> Real-time sync, best for teams<br/>
+                    <strong>Cons:</strong> Requires backend server setup
+                  </div>
+                </div>
+
+                <div className="border border-purple-200 rounded-lg p-4 bg-purple-50">
+                  <h4 className="font-semibold mb-2 flex items-center gap-2 text-purple-900">
+                    <ExternalLink size={18} className="text-purple-600" />
+                    Method 4: Use Jira (Recommended)
+                  </h4>
+                  <p className="text-sm text-purple-800 mb-2">
+                    Since you're integrating with Jira, use Jira as your single source of truth. 
+                    All team members connect to the same Jira project.
+                  </p>
+                  <div className="bg-purple-100 p-3 rounded text-sm text-purple-900">
+                    <strong>Pros:</strong> Already setup, everyone uses Jira<br/>
+                    <strong>Cons:</strong> Requires Jira access for all team members
+                  </div>
+                </div>
+              </div>
+
+              {/* Backend Setup Instructions */}
+              <div className="border-t border-gray-200 pt-4">
+                <details className="cursor-pointer">
+                  <summary className="font-semibold text-gray-700 hover:text-gray-900">
+                    🔧 How to Setup Your Own Backend Server (Click to expand)
+                  </summary>
+                  <div className="mt-3 space-y-2 text-sm text-gray-600 bg-gray-50 p-4 rounded">
+                    <p><strong>Option A: Simple Node.js Server</strong></p>
+                    <pre className="bg-gray-800 text-green-400 p-3 rounded overflow-x-auto text-xs">
+{`npm install express cors
+node server.js
+
+// Server will run on http://localhost:3001
+// Enter this URL in "Backend API URL" above`}
+                    </pre>
+                    
+                    <p className="mt-3"><strong>Option B: Use Free Cloud Services</strong></p>
+                    <ul className="list-disc list-inside space-y-1">
+                      <li>Supabase (supabase.com) - Free tier, PostgreSQL</li>
+                      <li>Firebase (firebase.google.com) - Free tier, NoSQL</li>
+                      <li>Railway (railway.app) - Free tier, any database</li>
+                      <li>Render (render.com) - Free tier, PostgreSQL</li>
+                    </ul>
+                    
+                    <p className="mt-3 text-amber-700">
+                      <strong>⚠️ Note:</strong> Backend setup requires technical knowledge. 
+                      For most teams, use Export/Import or Share Link methods.
+                    </p>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mt-6">
+              <button
+                onClick={() => setShowCloudSettingsModal(false)}
+                className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
