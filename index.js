@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Calendar, BarChart3, Trash2, Upload, Settings, Link2, ExternalLink, MessageSquare, RefreshCw, CheckCheck, ChevronRight, ChevronDown, Download, TrendingUp, PieChart, Wifi, WifiOff } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 const ProjectManager = () => {
   // Backend Configuration
@@ -21,10 +22,12 @@ const ProjectManager = () => {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showJiraSettingsModal, setShowJiraSettingsModal] = useState(false);
   const [showItemDetailsModal, setShowItemDetailsModal] = useState(false);
+  const [showExcelImportModal, setShowExcelImportModal] = useState(false);
   
   // Selected Items
   const [selectedItem, setSelectedItem] = useState(null);
   const [importPreview, setImportPreview] = useState(null);
+  const [excelImportPreview, setExcelImportPreview] = useState(null);
   
   // Filters
   const [timelineFilters, setTimelineFilters] = useState({
@@ -587,6 +590,233 @@ const ProjectManager = () => {
     alert('Disconnected from Jira');
   };
 
+  const downloadExcelTemplate = () => {
+    // Create a template Excel file
+    const template = [
+      {
+        'Name': 'User Authentication System',
+        'Type': 'Epic',
+        'Status': 'In Progress',
+        'Priority': 'High',
+        'Assignee': 'Team Lead',
+        'Start Date': '2025-10-01',
+        'End Date': '2025-11-15',
+        'Estimated Hours': 160,
+        'Parent': ''
+      },
+      {
+        'Name': 'Login Page',
+        'Type': 'Story',
+        'Status': 'In Progress',
+        'Priority': 'High',
+        'Assignee': 'John',
+        'Start Date': '2025-10-01',
+        'End Date': '2025-10-20',
+        'Estimated Hours': 40,
+        'Parent': 'User Authentication System'
+      },
+      {
+        'Name': 'Design Login UI',
+        'Type': 'Task',
+        'Status': 'Review',
+        'Priority': 'High',
+        'Assignee': 'Sarah',
+        'Start Date': '2025-10-01',
+        'End Date': '2025-10-10',
+        'Estimated Hours': 16,
+        'Parent': 'Login Page'
+      }
+    ];
+
+    const ws = XLSX.utils.json_to_sheet(template);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
+    
+    // Set column widths
+    ws['!cols'] = [
+      { wch: 30 }, // Name
+      { wch: 12 }, // Type
+      { wch: 15 }, // Status
+      { wch: 10 }, // Priority
+      { wch: 15 }, // Assignee
+      { wch: 12 }, // Start Date
+      { wch: 12 }, // End Date
+      { wch: 15 }, // Estimated Hours
+      { wch: 30 }  // Parent
+    ];
+
+    XLSX.writeFile(wb, 'project-manager-template.xlsx');
+  };
+
+  const handleExcelImport = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    try {
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, {
+        cellStyles: true,
+        cellDates: true
+      });
+
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+
+      if (jsonData.length === 0) {
+        alert('No data found in Excel file');
+        return;
+      }
+
+      // Map Excel columns to our format
+      const mappedItems = jsonData.map((row, index) => {
+        // Try to find columns (case-insensitive)
+        const getField = (possibleNames) => {
+          for (const name of possibleNames) {
+            const value = row[name] || row[name.toLowerCase()] || row[name.toUpperCase()];
+            if (value !== undefined && value !== null && value !== '') {
+              return value;
+            }
+          }
+          return null;
+        };
+
+        const name = getField(['Name', 'Title', 'Task', 'Item', 'Summary', 'Description']);
+        const type = getField(['Type', 'Item Type', 'Category']);
+        const status = getField(['Status', 'State']);
+        const priority = getField(['Priority', 'Importance']);
+        const assignee = getField(['Assignee', 'Assigned To', 'Owner', 'Responsible']);
+        const startDate = getField(['Start Date', 'Start', 'Begin Date']);
+        const endDate = getField(['End Date', 'End', 'Due Date', 'Deadline']);
+        const estimatedHours = getField(['Estimated Hours', 'Estimate', 'Hours', 'Time Estimate']);
+        const parentName = getField(['Parent', 'Parent Item', 'Parent Task']);
+
+        // Validate and normalize type
+        const normalizedType = type ? 
+          (type.toLowerCase().includes('epic') ? 'epic' :
+           type.toLowerCase().includes('story') ? 'story' :
+           type.toLowerCase().includes('subtask') || type.toLowerCase().includes('sub-task') ? 'subtask' :
+           'task') : 'task';
+
+        // Validate and normalize status
+        const normalizedStatus = status ?
+          (status.toLowerCase().includes('review') || status.toLowerCase().includes('done') ? 'review' :
+           status.toLowerCase().includes('progress') || status.toLowerCase().includes('active') ? 'in-progress' :
+           'pending') : 'pending';
+
+        // Validate and normalize priority
+        const normalizedPriority = priority ?
+          (priority.toLowerCase().includes('high') || priority.toLowerCase().includes('critical') ? 'high' :
+           priority.toLowerCase().includes('medium') || priority.toLowerCase().includes('normal') ? 'medium' :
+           'low') : 'medium';
+
+        // Parse dates
+        const parseDate = (dateValue) => {
+          if (!dateValue) return new Date().toISOString().split('T')[0];
+          
+          try {
+            // If it's already a Date object from Excel
+            if (dateValue instanceof Date) {
+              return dateValue.toISOString().split('T')[0];
+            }
+            // If it's a string
+            const parsed = new Date(dateValue);
+            if (!isNaN(parsed.getTime())) {
+              return parsed.toISOString().split('T')[0];
+            }
+          } catch (e) {
+            console.error('Date parse error:', e);
+          }
+          return new Date().toISOString().split('T')[0];
+        };
+
+        const level = normalizedType === 'epic' ? 1 : 
+                     normalizedType === 'story' ? 2 : 
+                     normalizedType === 'task' ? 3 : 4;
+
+        return {
+          id: Date.now() + index,
+          name: name || `Imported Item ${index + 1}`,
+          type: normalizedType,
+          level,
+          parentId: null,
+          parentName: parentName || null,
+          children: [],
+          status: normalizedStatus,
+          priority: normalizedPriority,
+          assignee: assignee || '',
+          startDate: parseDate(startDate),
+          endDate: parseDate(endDate),
+          estimatedHours: estimatedHours ? parseInt(estimatedHours) : 0,
+          actualHours: 0,
+          comments: [],
+          jira: null,
+          _excelRow: row
+        };
+      }).filter(item => item.name);
+
+      if (mappedItems.length === 0) {
+        alert('No valid items found. Make sure your Excel file has a "Name" or "Title" column.');
+        return;
+      }
+
+      // Try to match parent-child relationships by name
+      mappedItems.forEach(item => {
+        if (item.parentName) {
+          const parent = mappedItems.find(p => 
+            p.name.toLowerCase().includes(item.parentName.toLowerCase()) ||
+            item.parentName.toLowerCase().includes(p.name.toLowerCase())
+          );
+          if (parent) {
+            item.parentId = parent.id;
+            if (!parent.children.includes(item.id)) {
+              parent.children.push(item.id);
+            }
+          }
+        }
+      });
+
+      setExcelImportPreview(mappedItems);
+      setShowExcelImportModal(true);
+      
+      // Clear the file input
+      event.target.value = '';
+    } catch (error) {
+      console.error('Excel import error:', error);
+      alert('Error reading Excel file: ' + error.message);
+    }
+  };
+
+  const confirmExcelImport = async () => {
+    if (!selectedProject || !excelImportPreview) return;
+
+    // Clean up the items (remove temporary fields)
+    const cleanedItems = excelImportPreview.map(item => {
+      const { _excelRow, parentName, ...cleanItem } = item;
+      return cleanItem;
+    });
+
+    const updatedProjects = projects.map(p => {
+      if (p.id === selectedProject.id) {
+        return {
+          ...p,
+          items: [...p.items, ...cleanedItems]
+        };
+      }
+      return p;
+    });
+
+    setProjects(updatedProjects);
+    
+    if (useBackend) {
+      const updated = updatedProjects.find(p => p.id === selectedProject.id);
+      await saveProjectToBackend(updated);
+    }
+    
+    setShowExcelImportModal(false);
+    setExcelImportPreview(null);
+    alert(`Successfully imported ${cleanedItems.length} items from Excel!`);
+  };
+
   const exportData = () => {
     const dataStr = JSON.stringify({ projects, jiraConfig, exportDate: new Date().toISOString() }, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
@@ -1031,6 +1261,35 @@ const ProjectManager = () => {
           </div>
         )}
 
+        <div className="bg-gradient-to-r from-green-50 to-purple-50 border border-green-200 rounded-lg p-6">
+          <h3 className="text-lg font-bold mb-3">📥 Import Your Tasks</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white rounded-lg p-4 border border-green-200">
+              <div className="flex items-center gap-2 mb-2">
+                <Upload className="text-green-600" size={20} />
+                <span className="font-semibold text-green-900">Import from Excel</span>
+              </div>
+              <p className="text-sm text-gray-700 mb-3">Upload .xlsx files with your project tasks</p>
+              <button 
+                onClick={downloadExcelTemplate}
+                className="text-sm text-green-600 hover:text-green-800 font-semibold"
+              >
+                Download Template →
+              </button>
+            </div>
+            {jiraConfig.connected && (
+              <div className="bg-white rounded-lg p-4 border border-purple-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <Link2 className="text-purple-600" size={20} />
+                  <span className="font-semibold text-purple-900">Import from Jira</span>
+                </div>
+                <p className="text-sm text-gray-700 mb-3">Sync existing Jira issues to your project</p>
+                <span className="text-sm text-purple-600 font-semibold">Go to Hierarchy view →</span>
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-xl font-bold mb-4">Active Projects</h2>
           <div className="space-y-4">
@@ -1110,6 +1369,24 @@ const ProjectManager = () => {
                 Import from Jira
               </button>
             )}
+            <label className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 cursor-pointer">
+              <Upload size={20} />
+              Import Excel
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                onChange={handleExcelImport}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={downloadExcelTemplate}
+              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 flex items-center gap-2"
+              title="Download Excel template"
+            >
+              <Download size={20} />
+              Template
+            </button>
             <button
               onClick={() => setShowItemModal(true)}
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
@@ -1696,6 +1973,109 @@ const ProjectManager = () => {
             >
               Close
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Excel Import Modal */}
+      {showExcelImportModal && excelImportPreview && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Import from Excel Preview</h2>
+            
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+              <h3 className="font-semibold text-green-900">Found {excelImportPreview.length} items in Excel file</h3>
+              <p className="text-sm text-green-800">Review the mapped data and confirm to import</p>
+            </div>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4 text-sm">
+              <p className="text-blue-900"><strong>Column Mapping:</strong></p>
+              <div className="text-blue-800 mt-1 grid grid-cols-2 gap-2 text-xs">
+                <span>• Name/Title/Task → Item Name</span>
+                <span>• Type → Epic/Story/Task/Subtask</span>
+                <span>• Status → Pending/In Progress/Review</span>
+                <span>• Priority → Low/Medium/High</span>
+                <span>• Assignee/Owner → Assignee</span>
+                <span>• Start Date → Start Date</span>
+                <span>• End Date/Due Date → End Date</span>
+                <span>• Estimated Hours → Hours</span>
+                <span>• Parent → Parent Item (by name match)</span>
+              </div>
+            </div>
+
+            <div className="border border-gray-200 rounded-lg overflow-hidden mb-4">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-3">Type</th>
+                    <th className="text-left p-3">Name</th>
+                    <th className="text-left p-3">Status</th>
+                    <th className="text-left p-3">Priority</th>
+                    <th className="text-left p-3">Assignee</th>
+                    <th className="text-left p-3">Hours</th>
+                    <th className="text-left p-3">Parent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {excelImportPreview.slice(0, 20).map((item, index) => (
+                    <tr key={index} className="border-t border-gray-100">
+                      <td className="p-3">{getItemIcon(item.type)} {item.type}</td>
+                      <td className="p-3 max-w-xs truncate font-semibold">{item.name}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          item.status === 'review' ? 'bg-green-100 text-green-700' :
+                          item.status === 'in-progress' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          item.priority === 'high' ? 'bg-red-100 text-red-700' :
+                          item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}>
+                          {item.priority}
+                        </span>
+                      </td>
+                      <td className="p-3">{item.assignee || '-'}</td>
+                      <td className="p-3">{item.estimatedHours}h</td>
+                      <td className="p-3 text-xs">
+                        {item.parentName ? (
+                          <span className="text-purple-700">↳ {item.parentName}</span>
+                        ) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {excelImportPreview.length > 20 && (
+                <div className="p-3 bg-gray-50 text-center text-sm text-gray-600">
+                  ... and {excelImportPreview.length - 20} more items
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={confirmExcelImport}
+                className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+              >
+                Import {excelImportPreview.length} Items from Excel
+              </button>
+              <button
+                onClick={() => {
+                  setShowExcelImportModal(false);
+                  setExcelImportPreview(null);
+                }}
+                className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
