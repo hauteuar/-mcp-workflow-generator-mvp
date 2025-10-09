@@ -85,6 +85,13 @@ const ProjectManager = () => {
     }
   }, []);
 
+  // Save to localStorage
+  useEffect(() => {
+    if (!useBackend) {
+      localStorage.setItem('projectManagerData', JSON.stringify(projects));
+    }
+  }, [projects, useBackend]);
+
   // Auto-sync with backend
   useEffect(() => {
     if (useBackend && backendConnected) {
@@ -421,8 +428,11 @@ const ProjectManager = () => {
       
       setProjects(updatedProjects);
       
+      // Update selectedProject immediately
+      const updated = updatedProjects.find(p => p.id === selectedProject.id);
+      if (updated) setSelectedProject(updated);
+      
       if (useBackend) {
-        const updated = updatedProjects.find(p => p.id === selectedProject.id);
         await saveProjectToBackend(updated);
       }
       
@@ -445,6 +455,12 @@ const ProjectManager = () => {
     });
     
     setProjects(updatedProjects);
+    
+    // Update selectedProject immediately
+    if (selectedProject && selectedProject.id === projectId) {
+      const updated = updatedProjects.find(p => p.id === projectId);
+      if (updated) setSelectedProject(updated);
+    }
     
     if (useBackend) {
       const updated = updatedProjects.find(p => p.id === projectId);
@@ -483,6 +499,12 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
+    // Update selectedProject immediately
+    if (selectedProject && selectedProject.id === projectId) {
+      const updated = updatedProjects.find(p => p.id === projectId);
+      if (updated) setSelectedProject(updated);
+    }
+    
     if (useBackend) {
       const updated = updatedProjects.find(p => p.id === projectId);
       await saveProjectToBackend(updated);
@@ -515,13 +537,17 @@ const ProjectManager = () => {
     });
 
     setProjects(updatedProjects);
+    
+    // Update selectedProject and selectedItem immediately
+    const updatedProject = updatedProjects.find(p => p.id === selectedProject.id);
+    if (updatedProject) {
+      setSelectedProject(updatedProject);
+      const updatedItem = updatedProject.items.find(i => i.id === selectedItem.id);
+      if (updatedItem) setSelectedItem(updatedItem);
+    }
+    
     setNewComment('');
     setPostToJira(false);
-    
-    const updatedItem = updatedProjects
-      .find(p => p.id === selectedProject.id)
-      ?.items.find(i => i.id === selectedItem.id);
-    if (updatedItem) setSelectedItem(updatedItem);
   };
 
   // Jira Functions
@@ -1260,35 +1286,6 @@ const ProjectManager = () => {
             </button>
           </div>
         )}
-
-        <div className="bg-gradient-to-r from-green-50 to-purple-50 border border-green-200 rounded-lg p-6">
-          <h3 className="text-lg font-bold mb-3">📥 Import Your Tasks</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white rounded-lg p-4 border border-green-200">
-              <div className="flex items-center gap-2 mb-2">
-                <Upload className="text-green-600" size={20} />
-                <span className="font-semibold text-green-900">Import from Excel</span>
-              </div>
-              <p className="text-sm text-gray-700 mb-3">Upload .xlsx files with your project tasks</p>
-              <button 
-                onClick={downloadExcelTemplate}
-                className="text-sm text-green-600 hover:text-green-800 font-semibold"
-              >
-                Download Template →
-              </button>
-            </div>
-            {jiraConfig.connected && (
-              <div className="bg-white rounded-lg p-4 border border-purple-200">
-                <div className="flex items-center gap-2 mb-2">
-                  <Link2 className="text-purple-600" size={20} />
-                  <span className="font-semibold text-purple-900">Import from Jira</span>
-                </div>
-                <p className="text-sm text-gray-700 mb-3">Sync existing Jira issues to your project</p>
-                <span className="text-sm text-purple-600 font-semibold">Go to Hierarchy view →</span>
-              </div>
-            )}
-          </div>
-        </div>
 
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-xl font-bold mb-4">Active Projects</h2>
