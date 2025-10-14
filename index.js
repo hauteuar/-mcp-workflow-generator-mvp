@@ -109,14 +109,7 @@ const ProjectManager = () => {
       return () => clearInterval(interval);
     }
   }, [useBackend, backendConnected]);
-    if (useBackend && backendConnected) {
-      const interval = setInterval(() => {
-        syncFromBackend();
-      }, 10000);
-      return () => clearInterval(interval);
-    }
-  }, [useBackend, backendConnected]);
-
+    
   // Save to localStorage
   useEffect(() => {
     if (!useBackend) {
@@ -1127,6 +1120,7 @@ const ProjectManager = () => {
       return true;
     });
 
+   
 
     const getDatePosition = (date, startDate, endDate) => {
       const start = new Date(startDate).getTime();
