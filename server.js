@@ -2,7 +2,7 @@
 import express from 'express';
 import cors from 'cors';
 import { JSONFilePreset } from 'lowdb/node';
-import fetch from 'node-fetch'; // npm install node-fetch
+import fetch from 'node-fetch';
 
 const app = express();
 const PORT = 3001;
@@ -86,7 +86,9 @@ app.delete('/api/projects/:id', async (req, res) => {
   }
 });
 
-// JIRA PROXY ENDPOINTS
+// ============================================
+// JIRA PROXY ENDPOINTS (NEW)
+// ============================================
 
 // Create Jira Issue
 app.post('/api/jira/create-issue', async (req, res) => {
