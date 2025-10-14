@@ -653,31 +653,28 @@ const ProjectManager = () => {
     if (!jiraConfig.connected) return null;
     
     try {
-      const auth = btoa(`${jiraConfig.email}:${jiraConfig.apiToken}`);
       const jiraTypeMap = { epic: 'Epic', story: 'Story', task: 'Task', subtask: 'Sub-task' };
       
       const requestBody = {
-        fields: {
-          project: { key: jiraConfig.defaultProject },
-          summary: item.name,
-          issuetype: { name: jiraTypeMap[item.type] || 'Task' },
-          priority: { name: item.priority === 'high' ? 'High' : item.priority === 'medium' ? 'Medium' : 'Low' },
-          duedate: item.endDate
+        jiraConfig,
+        item: {
+          name: item.name,
+          type: jiraTypeMap[item.type] || 'Task',
+          priority: item.priority === 'high' ? 'High' : item.priority === 'medium' ? 'Medium' : 'Low',
+          duedate: item.endDate,
+          parentId: item.parentId
         }
       };
 
-      const response = await fetch(`${jiraConfig.url}/rest/api/3/issue`, {
+      const response = await fetch(`${backendUrl}/jira/create-issue`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Basic ${auth}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        alert(`Failed to create Jira issue: ${errorData.errorMessages?.join(', ')}`);
+        alert(`Failed to create Jira issue: ${errorData.error || 'Unknown error'}`);
         return null;
       }
 
