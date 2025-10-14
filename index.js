@@ -276,8 +276,24 @@ const ProjectManager = () => {
     try {
       const response = await fetch(`${backendUrl}/projects`);
       if (response.ok) {
-        const data = await response.json();
-        setProjects(data);
+        const backendData = await response.json();
+        
+        // Merge backend data with local data intelligently
+        // Only update if backend has newer data
+        const mergedProjects = [...projects];
+        
+        backendData.forEach(backendProject => {
+          const localIndex = mergedProjects.findIndex(p => p.id === backendProject.id);
+          if (localIndex === -1) {
+            // New project from backend, add it
+            mergedProjects.push(backendProject);
+          } else {
+            // Project exists, update it with backend data
+            mergedProjects[localIndex] = backendProject;
+          }
+        });
+        
+        setProjects(mergedProjects);
         setLastSyncTime(new Date().toISOString());
       }
     } catch (error) {
@@ -289,13 +305,9 @@ const ProjectManager = () => {
     if (!useBackend) return;
     
     try {
-      const method = project.id < 1000000000 ? 'PUT' : 'POST';
-      const url = method === 'POST' 
-        ? `${backendUrl}/projects` 
-        : `${backendUrl}/projects/${project.id}`;
-      
-      const response = await fetch(url, {
-        method,
+      // Always use PUT with the project ID to update or create
+      const response = await fetch(`${backendUrl}/projects/${project.id}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(project)
       });
@@ -382,6 +394,27 @@ const ProjectManager = () => {
       setNewProject({ name: '', description: '', startDate: '', endDate: '', status: 'planning' });
       setShowProjectModal(false);
     }
+  };
+
+  const deleteProject = async (projectId) => {
+    if (!confirm('Are you sure you want to delete this project? All items will be permanently deleted.')) {
+      return;
+    }
+
+    const updatedProjects = projects.filter(p => p.id !== projectId);
+    setProjects(updatedProjects);
+    
+    // Clear selected project if it's the one being deleted
+    if (selectedProject && selectedProject.id === projectId) {
+      setSelectedProject(null);
+      setActiveView('dashboard');
+    }
+    
+    if (useBackend) {
+      await deleteProjectFromBackend(projectId);
+    }
+    
+    alert('Project deleted successfully');
   };
 
   const addItem = async () => {
@@ -1297,31 +1330,56 @@ const ProjectManager = () => {
               return (
                 <div 
                   key={project.id} 
-                  className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition cursor-pointer" 
-                  onClick={() => { setSelectedProject(project); setActiveView('hierarchy'); }}
+                  className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition"
                 >
                   <div className="flex justify-between items-start mb-3">
-                    <div>
+                    <div 
+                      className="flex-1 cursor-pointer"
+                      onClick={() => { setSelectedProject(project); setActiveView('hierarchy'); }}
+                    >
                       <h3 className="font-bold text-lg">{project.name}</h3>
                       <p className="text-gray-600 text-sm">{project.description}</p>
                     </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                      project.status === 'completed' ? 'bg-green-100 text-green-700' :
-                      project.status === 'in-progress' ? 'bg-blue-100 text-blue-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {project.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                        project.status === 'completed' ? 'bg-green-100 text-green-700' :
+                        project.status === 'in-progress' ? 'bg-blue-100 text-blue-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {project.status}
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteProject(project.id);
+                        }}
+                        className="text-red-600 hover:text-red-800 p-2 hover:bg-red-50 rounded transition"
+                        title="Delete project"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-gray-600 mb-3">
+                  <div 
+                    className="flex items-center gap-4 text-sm text-gray-600 mb-3 cursor-pointer"
+                    onClick={() => { setSelectedProject(project); setActiveView('hierarchy'); }}
+                  >
                     <span>{project.items.length} items</span>
                     <span>Start: {new Date(project.startDate).toLocaleDateString()}</span>
                     <span>End: {new Date(project.endDate).toLocaleDateString()}</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="w-full bg-gray-200 rounded-full h-2 cursor-pointer"
+                    onClick={() => { setSelectedProject(project); setActiveView('hierarchy'); }}
+                  >
                     <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${progress}%` }}></div>
                   </div>
-                  <div className="text-right text-sm text-gray-600 mt-1">{Math.round(progress)}% complete</div>
+                  <div 
+                    className="text-right text-sm text-gray-600 mt-1 cursor-pointer"
+                    onClick={() => { setSelectedProject(project); setActiveView('hierarchy'); }}
+                  >
+                    {Math.round(progress)}% complete
+                  </div>
                 </div>
               );
             })}
@@ -2165,7 +2223,7 @@ const ProjectManager = () => {
       {showBackendSettings && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold mb-4">Team Sync Settings (SQLite Backend)</h2>
+            <h2 className="text-xl font-bold mb-4">Team Sync Settings (Backend API)</h2>
             
             <div className="space-y-4">
               {useBackend && backendConnected ? (
@@ -2200,12 +2258,24 @@ const ProjectManager = () => {
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                     <h3 className="font-semibold text-blue-900 mb-2">Setup Instructions</h3>
                     <ol className="text-sm text-blue-800 space-y-2 list-decimal list-inside">
-                      <li>Create server.js with Express + SQLite</li>
-                      <li>Install: npm install express cors sqlite3</li>
+                      <li>Create server.js with Express + any database (lowdb, SQLite, MongoDB, etc.)</li>
+                      <li>Install: npm install express cors [your-db-library]</li>
                       <li>Run: node server.js</li>
                       <li>Server starts on port 3001</li>
                       <li>Enter server URL below and connect</li>
                     </ol>
+                    <div className="mt-3 p-3 bg-white rounded border border-blue-300">
+                      <p className="text-xs text-blue-900 font-semibold mb-2">Required API Endpoints:</p>
+                      <div className="text-xs text-gray-800 space-y-1">
+                        <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">GET /api/health</span> - Health check</div>
+                        <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">GET /api/projects</span> - Get all projects</div>
+                        <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">PUT /api/projects/:id</span> - Create/update project</div>
+                        <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">DELETE /api/projects/:id</span> - Delete project</div>
+                      </div>
+                      <p className="text-xs text-blue-800 mt-2">
+                        💡 PUT endpoint should check if project exists by ID, then update or create accordingly
+                      </p>
+                    </div>
                   </div>
 
                   <div>
