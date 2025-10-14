@@ -37,6 +37,8 @@ const ProjectManager = () => {
     showSubtasks: false
   });
   
+  const [selectedChartType, setSelectedChartType] = useState('gantt');
+  
   // Jira Configuration
   const [jiraConfig, setJiraConfig] = useState({
     url: '',
@@ -68,6 +70,8 @@ const ProjectManager = () => {
     estimatedHours: 0,
     createInJira: false
   });
+
+  const [dateValidationError, setDateValidationError] = useState('');
 
   const [newComment, setNewComment] = useState('');
   const [postToJira, setPostToJira] = useState(false);
@@ -375,25 +379,39 @@ const ProjectManager = () => {
 
   // CRUD Operations
   const addProject = async () => {
-    if (newProject.name && newProject.startDate && newProject.endDate) {
-      const projectToAdd = {
-        ...newProject,
-        id: Date.now(),
-        items: []
-      };
-      
-      if (useBackend) {
-        const saved = await saveProjectToBackend(projectToAdd);
-        if (saved) {
-          setProjects([...projects, saved]);
-        }
-      } else {
-        setProjects([...projects, projectToAdd]);
-      }
-      
-      setNewProject({ name: '', description: '', startDate: '', endDate: '', status: 'planning' });
-      setShowProjectModal(false);
+    if (!newProject.name || !newProject.startDate || !newProject.endDate) {
+      alert('Please fill in all required fields');
+      return;
     }
+
+    // Validate dates
+    const start = new Date(newProject.startDate);
+    const end = new Date(newProject.endDate);
+    
+    if (end < start) {
+      setProjectDateError('Project end date cannot be before start date');
+      return;
+    }
+
+    setProjectDateError('');
+
+    const projectToAdd = {
+      ...newProject,
+      id: Date.now(),
+      items: []
+    };
+    
+    if (useBackend) {
+      const saved = await saveProjectToBackend(projectToAdd);
+      if (saved) {
+        setProjects([...projects, saved]);
+      }
+    } else {
+      setProjects([...projects, projectToAdd]);
+    }
+    
+    setNewProject({ name: '', description: '', startDate: '', endDate: '', status: 'planning' });
+    setShowProjectModal(false);
   };
 
   const deleteProject = async (projectId) => {
@@ -417,61 +435,108 @@ const ProjectManager = () => {
     alert('Project deleted successfully');
   };
 
-  const addItem = async () => {
-    if (selectedProject && newItem.name && newItem.startDate && newItem.endDate) {
-      const level = newItem.parentId ? 
-        (selectedProject.items.find(i => i.id === newItem.parentId)?.level || 0) + 1 : 1;
-      
-      const itemToAdd = { 
-        ...newItem, 
-        id: Date.now(),
-        level,
-        children: [],
-        comments: [],
-        actualHours: 0,
-        jira: null
-      };
-
-      if (newItem.createInJira && jiraConfig.connected) {
-        const jiraIssue = await createJiraIssue(itemToAdd);
-        if (jiraIssue) {
-          itemToAdd.jira = jiraIssue;
-        }
-      }
-
-      const updatedProjects = projects.map(p => {
-        if (p.id === selectedProject.id) {
-          const updatedItems = [...p.items, itemToAdd];
-          
-          if (newItem.parentId) {
-            return {
-              ...p,
-              items: updatedItems.map(item => 
-                item.id === newItem.parentId 
-                  ? { ...item, children: [...item.children, itemToAdd.id] }
-                  : item
-              )
-            };
-          }
-          
-          return { ...p, items: updatedItems };
-        }
-        return p;
-      });
-      
-      setProjects(updatedProjects);
-      
-      // Update selectedProject immediately
-      const updated = updatedProjects.find(p => p.id === selectedProject.id);
-      if (updated) setSelectedProject(updated);
-      
-      if (useBackend) {
-        await saveProjectToBackend(updated);
-      }
-      
-      setNewItem({ name: '', type: 'task', parentId: null, status: 'pending', priority: 'medium', startDate: '', endDate: '', assignee: '', estimatedHours: 0, createInJira: false });
-      setShowItemModal(false);
+  // Validate dates
+  const validateDates = (startDate, endDate, parentId = null) => {
+    if (!startDate || !endDate) {
+      return 'Start date and end date are required';
     }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    // Check if end date is before start date
+    if (end < start) {
+      return 'End date cannot be before start date';
+    }
+
+    // Check parent constraints if parent exists
+    if (parentId && selectedProject) {
+      const parent = selectedProject.items.find(i => i.id === parentId);
+      if (parent) {
+        const parentStart = new Date(parent.startDate);
+        const parentEnd = new Date(parent.endDate);
+
+        if (start < parentStart) {
+          return `Start date cannot be before parent's start date (${new Date(parent.startDate).toLocaleDateString()})`;
+        }
+
+        if (end > parentEnd) {
+          return `End date cannot be after parent's end date (${new Date(parent.endDate).toLocaleDateString()})`;
+        }
+      }
+    }
+
+    return null;
+  };
+
+  const addItem = async () => {
+    if (!selectedProject || !newItem.name || !newItem.startDate || !newItem.endDate) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    // Validate dates
+    const dateError = validateDates(newItem.startDate, newItem.endDate, newItem.parentId);
+    if (dateError) {
+      setDateValidationError(dateError);
+      return;
+    }
+
+    setDateValidationError('');
+
+    const level = newItem.parentId ? 
+      (selectedProject.items.find(i => i.id === newItem.parentId)?.level || 0) + 1 : 1;
+    
+    const itemToAdd = { 
+      ...newItem, 
+      id: Date.now(),
+      level,
+      children: [],
+      comments: [],
+      actualHours: 0,
+      jira: null
+    };
+
+    if (newItem.createInJira && jiraConfig.connected) {
+      const jiraIssue = await createJiraIssue(itemToAdd);
+      if (jiraIssue) {
+        itemToAdd.jira = jiraIssue;
+      }
+    }
+
+    const updatedProjects = projects.map(p => {
+      if (p.id === selectedProject.id) {
+        const updatedItems = [...p.items, itemToAdd];
+        
+        if (newItem.parentId) {
+          return {
+            ...p,
+            items: updatedItems.map(item => 
+              item.id === newItem.parentId 
+                ? { ...item, children: [...item.children, itemToAdd.id] }
+                : item
+            )
+          };
+        }
+        
+        return { ...p, items: updatedItems };
+      }
+      return p;
+    });
+    
+    setProjects(updatedProjects);
+    
+    // Update selectedProject immediately
+    const updated = updatedProjects.find(p => p.id === selectedProject.id);
+    if (updated) setSelectedProject(updated);
+    
+    if (useBackend) {
+      await saveProjectToBackend(updated);
+    }
+    
+    setNewItem({ name: '', type: 'task', parentId: null, status: 'pending', priority: 'medium', startDate: '', endDate: '', assignee: '', estimatedHours: 0, createInJira: false });
+    setDateValidationError('');
+    setShowItemModal(false);
   };
 
   const updateItemStatus = async (projectId, itemId, newStatus) => {
@@ -1036,7 +1101,7 @@ const ProjectManager = () => {
       return ((current - start) / (end - start)) * 100;
     };
 
-    const renderTimelineBars = (items, parentId = null, indent = 0) => {
+    const renderGanttChart = (items, parentId = null, indent = 0) => {
       const children = items.filter(item => item.parentId === parentId);
       
       return children.map(item => {
@@ -1084,74 +1149,334 @@ const ProjectManager = () => {
                 </div>
               </div>
             </div>
-            {isExpanded && hasChildren && renderTimelineBars(items, item.id, indent + 1)}
+            {isExpanded && hasChildren && renderGanttChart(items, item.id, indent + 1)}
           </div>
         );
       });
     };
 
+    const renderBurndownChart = () => {
+      const stats = getItemStats();
+      const totalItems = stats.total;
+      const completedItems = stats.review;
+      const inProgressItems = stats.inProgress;
+      const pendingItems = stats.pending;
+
+      return (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className="text-green-600 text-sm font-semibold mb-2">COMPLETED</div>
+              <div className="text-3xl font-bold text-green-700">{completedItems}</div>
+              <div className="text-sm text-green-600 mt-1">{totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0}% of total</div>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="text-blue-600 text-sm font-semibold mb-2">IN PROGRESS</div>
+              <div className="text-3xl font-bold text-blue-700">{inProgressItems}</div>
+              <div className="text-sm text-blue-600 mt-1">{totalItems > 0 ? Math.round((inProgressItems / totalItems) * 100) : 0}% of total</div>
+            </div>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <div className="text-gray-600 text-sm font-semibold mb-2">PENDING</div>
+              <div className="text-3xl font-bold text-gray-700">{pendingItems}</div>
+              <div className="text-sm text-gray-600 mt-1">{totalItems > 0 ? Math.round((pendingItems / totalItems) * 100) : 0}% of total</div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-lg font-bold mb-4">Work Remaining</h3>
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-sm mb-2">
+                  <span>Overall Progress</span>
+                  <span className="font-semibold">{totalItems - completedItems} items remaining</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-8">
+                  <div 
+                    className="bg-gradient-to-r from-green-500 to-green-600 h-8 rounded-full flex items-center justify-center text-white text-sm font-semibold transition-all"
+                    style={{ width: `${totalItems > 0 ? (completedItems / totalItems) * 100 : 0}%` }}
+                  >
+                    {totalItems > 0 && `${Math.round((completedItems / totalItems) * 100)}% Complete`}
+                  </div>
+                </div>
+              </div>
+
+              {selectedProject.items.filter(i => i.type === 'epic').map(epic => {
+                const epicItems = selectedProject.items.filter(i => i.parentId === epic.id || i.id === epic.id);
+                const epicTotal = epicItems.length;
+                const epicCompleted = epicItems.filter(i => i.status === 'review').length;
+                const epicProgress = epicTotal > 0 ? (epicCompleted / epicTotal) * 100 : 0;
+
+                return (
+                  <div key={epic.id}>
+                    <div className="flex justify-between text-sm mb-2">
+                      <span className="truncate">{epic.name}</span>
+                      <span className="font-semibold">{epicTotal - epicCompleted} items remaining</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-6">
+                      <div 
+                        className="bg-blue-500 h-6 rounded-full flex items-center justify-center text-white text-xs font-semibold transition-all"
+                        style={{ width: `${epicProgress}%` }}
+                      >
+                        {epicProgress > 10 && `${Math.round(epicProgress)}%`}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const renderResourceChart = () => {
+      const assigneeMap = {};
+      selectedProject.items.forEach(item => {
+        if (item.assignee) {
+          if (!assigneeMap[item.assignee]) {
+            assigneeMap[item.assignee] = { total: 0, pending: 0, inProgress: 0, review: 0, hours: 0 };
+          }
+          assigneeMap[item.assignee].total++;
+          assigneeMap[item.assignee].hours += item.estimatedHours;
+          if (item.status === 'pending') assigneeMap[item.assignee].pending++;
+          else if (item.status === 'in-progress') assigneeMap[item.assignee].inProgress++;
+          else if (item.status === 'review') assigneeMap[item.assignee].review++;
+        }
+      });
+
+      const assignees = Object.entries(assigneeMap).sort((a, b) => b[1].total - a[1].total);
+
+      return (
+        <div className="space-y-6">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-lg font-bold mb-4">Resource Allocation</h3>
+            <div className="space-y-4">
+              {assignees.map(([name, data]) => (
+                <div key={name} className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="font-semibold text-lg">{name}</span>
+                    <span className="text-sm text-gray-600">{data.total} items • {data.hours}h estimated</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">{data.review}</div>
+                      <div className="text-xs text-gray-600">Completed</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-600">{data.inProgress}</div>
+                      <div className="text-xs text-gray-600">In Progress</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-gray-600">{data.pending}</div>
+                      <div className="text-xs text-gray-600">Pending</div>
+                    </div>
+                  </div>
+                  <div className="h-4 flex rounded-full overflow-hidden">
+                    <div className="bg-green-500" style={{ width: `${(data.review / data.total) * 100}%` }}></div>
+                    <div className="bg-blue-500" style={{ width: `${(data.inProgress / data.total) * 100}%` }}></div>
+                    <div className="bg-gray-400" style={{ width: `${(data.pending / data.total) * 100}%` }}></div>
+                  </div>
+                </div>
+              ))}
+              {assignees.length === 0 && (
+                <div className="text-center text-gray-500 py-8">
+                  No assignees yet. Assign team members to items to see resource allocation.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const renderPriorityChart = () => {
+      const stats = getItemStats();
+      const priorityMap = { high: 0, medium: 0, low: 0 };
+      const priorityByStatus = { 
+        high: { pending: 0, inProgress: 0, review: 0 },
+        medium: { pending: 0, inProgress: 0, review: 0 },
+        low: { pending: 0, inProgress: 0, review: 0 }
+      };
+
+      selectedProject.items.forEach(item => {
+        priorityMap[item.priority]++;
+        if (item.status === 'pending') priorityByStatus[item.priority].pending++;
+        else if (item.status === 'in-progress') priorityByStatus[item.priority].inProgress++;
+        else if (item.status === 'review') priorityByStatus[item.priority].review++;
+      });
+
+      return (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+              <div className="text-red-600 text-sm font-semibold mb-2">HIGH PRIORITY</div>
+              <div className="text-4xl font-bold text-red-700 mb-3">{priorityMap.high}</div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span>Completed:</span>
+                  <span className="font-semibold">{priorityByStatus.high.review}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>In Progress:</span>
+                  <span className="font-semibold">{priorityByStatus.high.inProgress}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Pending:</span>
+                  <span className="font-semibold">{priorityByStatus.high.pending}</span>
+                </div>
+              </div>
+            </div>
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+              <div className="text-yellow-600 text-sm font-semibold mb-2">MEDIUM PRIORITY</div>
+              <div className="text-4xl font-bold text-yellow-700 mb-3">{priorityMap.medium}</div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span>Completed:</span>
+                  <span className="font-semibold">{priorityByStatus.medium.review}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>In Progress:</span>
+                  <span className="font-semibold">{priorityByStatus.medium.inProgress}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Pending:</span>
+                  <span className="font-semibold">{priorityByStatus.medium.pending}</span>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-6">
+              <div className="text-gray-600 text-sm font-semibold mb-2">LOW PRIORITY</div>
+              <div className="text-4xl font-bold text-gray-700 mb-3">{priorityMap.low}</div>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span>Completed:</span>
+                  <span className="font-semibold">{priorityByStatus.low.review}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>In Progress:</span>
+                  <span className="font-semibold">{priorityByStatus.low.inProgress}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Pending:</span>
+                  <span className="font-semibold">{priorityByStatus.low.pending}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-lg font-bold mb-4">Priority Distribution</h3>
+            <div className="h-12 flex rounded-full overflow-hidden">
+              <div 
+                className="bg-red-500 flex items-center justify-center text-white text-sm font-semibold" 
+                style={{ width: `${(priorityMap.high / stats.total) * 100}%` }}
+              >
+                {priorityMap.high > 0 && `${Math.round((priorityMap.high / stats.total) * 100)}%`}
+              </div>
+              <div 
+                className="bg-yellow-500 flex items-center justify-center text-white text-sm font-semibold" 
+                style={{ width: `${(priorityMap.medium / stats.total) * 100}%` }}
+              >
+                {priorityMap.medium > 0 && `${Math.round((priorityMap.medium / stats.total) * 100)}%`}
+              </div>
+              <div 
+                className="bg-gray-400 flex items-center justify-center text-white text-sm font-semibold" 
+                style={{ width: `${(priorityMap.low / stats.total) * 100}%` }}
+              >
+                {priorityMap.low > 0 && `${Math.round((priorityMap.low / stats.total) * 100)}%`}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold">{selectedProject.name} - Timeline</h2>
-          <button
-            onClick={exportData}
-            className="bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 text-sm"
-          >
-            <Download size={16} />
-            Export
-          </button>
+        <div className="flex justify-between items-center flex-wrap gap-3">
+          <h2 className="text-2xl font-bold">{selectedProject.name} - Charts & Analytics</h2>
+          <div className="flex gap-2 flex-wrap">
+            <select
+              value={selectedChartType}
+              onChange={(e) => setSelectedChartType(e.target.value)}
+              className="border border-gray-300 rounded-lg px-4 py-2 text-sm bg-white"
+            >
+              <option value="gantt">📊 Gantt Chart</option>
+              <option value="burndown">📉 Burndown Chart</option>
+              <option value="resource">👥 Resource Allocation</option>
+              <option value="priority">⚡ Priority Analysis</option>
+            </select>
+            <button
+              onClick={() => exportChart()}
+              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center gap-2 text-sm"
+            >
+              <Download size={16} />
+              Export Chart
+            </button>
+          </div>
         </div>
 
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <div className="mb-4 flex gap-4 items-center flex-wrap">
-            <span className="font-semibold text-sm">Show Levels:</span>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={timelineFilters.showEpics}
-                onChange={(e) => setTimelineFilters({...timelineFilters, showEpics: e.target.checked})}
-                className="w-4 h-4"
-              />
-              <span className="text-sm">📦 Epics</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={timelineFilters.showStories}
-                onChange={(e) => setTimelineFilters({...timelineFilters, showStories: e.target.checked})}
-                className="w-4 h-4"
-              />
-              <span className="text-sm">📖 Stories</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={timelineFilters.showTasks}
-                onChange={(e) => setTimelineFilters({...timelineFilters, showTasks: e.target.checked})}
-                className="w-4 h-4"
-              />
-              <span className="text-sm">✓ Tasks</span>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={timelineFilters.showSubtasks}
-                onChange={(e) => setTimelineFilters({...timelineFilters, showSubtasks: e.target.checked})}
-                className="w-4 h-4"
-              />
-              <span className="text-sm">○ Subtasks</span>
-            </label>
-          </div>
+        <div id="chart-container">
+          {selectedChartType === 'gantt' && (
+            <div className="bg-white rounded-lg border border-gray-200 p-4">
+              <div className="mb-4 flex gap-4 items-center flex-wrap">
+                <span className="font-semibold text-sm">Show Levels:</span>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={timelineFilters.showEpics}
+                    onChange={(e) => setTimelineFilters({...timelineFilters, showEpics: e.target.checked})}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm">📦 Epics</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={timelineFilters.showStories}
+                    onChange={(e) => setTimelineFilters({...timelineFilters, showStories: e.target.checked})}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm">📖 Stories</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={timelineFilters.showTasks}
+                    onChange={(e) => setTimelineFilters({...timelineFilters, showTasks: e.target.checked})}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm">✓ Tasks</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={timelineFilters.showSubtasks}
+                    onChange={(e) => setTimelineFilters({...timelineFilters, showSubtasks: e.target.checked})}
+                    className="w-4 h-4"
+                  />
+                  <span className="text-sm">○ Subtasks</span>
+                </label>
+              </div>
 
-          <div className="space-y-2">
-            {renderTimelineBars(filteredItems, null, 0)}
-          </div>
+              <div className="overflow-x-auto">
+                <div className="min-w-[800px]">
+                  <div className="space-y-2">
+                    {renderGanttChart(filteredItems, null, 0)}
+                  </div>
+                </div>
+              </div>
 
-          <div className="mt-6 pt-6 border-t border-gray-200 flex justify-between text-sm text-gray-600">
-            <span>{new Date(selectedProject.startDate).toLocaleDateString()}</span>
-            <span>{new Date(selectedProject.endDate).toLocaleDateString()}</span>
-          </div>
+              <div className="mt-6 pt-6 border-t border-gray-200 flex justify-between text-sm text-gray-600">
+                <span>{new Date(selectedProject.startDate).toLocaleDateString()}</span>
+                <span>{new Date(selectedProject.endDate).toLocaleDateString()}</span>
+              </div>
+            </div>
+          )}
+
+          {selectedChartType === 'burndown' && renderBurndownChart()}
+          {selectedChartType === 'resource' && renderResourceChart()}
+          {selectedChartType === 'priority' && renderPriorityChart()}
         </div>
       </div>
     );
@@ -1552,7 +1877,7 @@ const ProjectManager = () => {
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${activeView === 'timeline' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
           >
             <Calendar size={18} />
-            Timeline
+            Charts
           </button>
           <button
             onClick={() => setActiveView('charts')}
@@ -1602,7 +1927,18 @@ const ProjectManager = () => {
                   <input
                     type="date"
                     value={newProject.startDate}
-                    onChange={(e) => setNewProject({ ...newProject, startDate: e.target.value })}
+                    onChange={(e) => {
+                      setNewProject({ ...newProject, startDate: e.target.value });
+                      if (newProject.endDate) {
+                        const start = new Date(e.target.value);
+                        const end = new Date(newProject.endDate);
+                        if (end < start) {
+                          setProjectDateError('End date cannot be before start date');
+                        } else {
+                          setProjectDateError('');
+                        }
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded px-3 py-2"
                   />
                 </div>
@@ -1611,11 +1947,27 @@ const ProjectManager = () => {
                   <input
                     type="date"
                     value={newProject.endDate}
-                    onChange={(e) => setNewProject({ ...newProject, endDate: e.target.value })}
+                    onChange={(e) => {
+                      setNewProject({ ...newProject, endDate: e.target.value });
+                      if (newProject.startDate) {
+                        const start = new Date(newProject.startDate);
+                        const end = new Date(e.target.value);
+                        if (end < start) {
+                          setProjectDateError('End date cannot be before start date');
+                        } else {
+                          setProjectDateError('');
+                        }
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded px-3 py-2"
                   />
                 </div>
               </div>
+              {projectDateError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  ⚠️ {projectDateError}
+                </div>
+              )}
             </div>
             <div className="flex gap-2 mt-6">
               <button
@@ -1625,7 +1977,10 @@ const ProjectManager = () => {
                 Create Project
               </button>
               <button
-                onClick={() => setShowProjectModal(false)}
+                onClick={() => {
+                  setShowProjectModal(false);
+                  setProjectDateError('');
+                }}
                 className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
               >
                 Cancel
@@ -1647,7 +2002,10 @@ const ProjectManager = () => {
                   {['epic', 'story', 'task', 'subtask'].map(type => (
                     <button
                       key={type}
-                      onClick={() => setNewItem({...newItem, type})}
+                      onClick={() => {
+                        setNewItem({...newItem, type, parentId: null});
+                        setDateValidationError('');
+                      }}
                       className={`flex-1 px-3 py-2 rounded border text-sm ${
                         newItem.type === type 
                           ? 'bg-blue-600 text-white border-blue-600' 
@@ -1663,7 +2021,15 @@ const ProjectManager = () => {
                 <label className="block text-sm font-semibold mb-1">Parent Item (Optional)</label>
                 <select
                   value={newItem.parentId || ''}
-                  onChange={(e) => setNewItem({...newItem, parentId: e.target.value ? parseInt(e.target.value) : null})}
+                  onChange={(e) => {
+                    const parentId = e.target.value ? parseInt(e.target.value) : null;
+                    setNewItem({...newItem, parentId});
+                    // Revalidate dates when parent changes
+                    if (newItem.startDate && newItem.endDate) {
+                      const error = validateDates(newItem.startDate, newItem.endDate, parentId);
+                      setDateValidationError(error || '');
+                    }
+                  }}
                   className="w-full border border-gray-300 rounded px-3 py-2"
                 >
                   <option value="">None (Top Level)</option>
@@ -1675,13 +2041,39 @@ const ProjectManager = () => {
                       if (newItem.type === 'subtask') return item.type === 'task';
                       return false;
                     })
-                    .map(item => (
-                      <option key={item.id} value={item.id}>
-                        {getItemIcon(item.type)} {item.name}
-                      </option>
-                    ))
+                    .map(item => {
+                      // Show epic name for better context
+                      let displayName = item.name;
+                      if (item.type === 'story' || item.type === 'task') {
+                        const parentItem = selectedProject.items.find(i => i.id === item.parentId);
+                        if (parentItem) {
+                          displayName = `${item.name} (under ${parentItem.name})`;
+                        }
+                      }
+                      return (
+                        <option key={item.id} value={item.id}>
+                          {getItemIcon(item.type)} {displayName}
+                        </option>
+                      );
+                    })
                   }
                 </select>
+                {newItem.type !== 'epic' && selectedProject.items.filter(i => {
+                  if (newItem.type === 'story') return i.type === 'epic';
+                  if (newItem.type === 'task') return i.type === 'story';
+                  if (newItem.type === 'subtask') return i.type === 'task';
+                  return false;
+                }).length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    ⚠️ No {newItem.type === 'story' ? 'epics' : newItem.type === 'task' ? 'stories' : 'tasks'} available. 
+                    {newItem.type === 'story' && ' Create an epic first or select "None" to create top-level item.'}
+                  </p>
+                )}
+                {newItem.parentId && selectedProject.items.find(i => i.id === newItem.parentId) && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    📅 Parent dates: {new Date(selectedProject.items.find(i => i.id === newItem.parentId).startDate).toLocaleDateString()} - {new Date(selectedProject.items.find(i => i.id === newItem.parentId).endDate).toLocaleDateString()}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-semibold mb-1">Item Name</label>
@@ -1735,7 +2127,13 @@ const ProjectManager = () => {
                   <input
                     type="date"
                     value={newItem.startDate}
-                    onChange={(e) => setNewItem({ ...newItem, startDate: e.target.value })}
+                    onChange={(e) => {
+                      setNewItem({ ...newItem, startDate: e.target.value });
+                      if (newItem.endDate) {
+                        const error = validateDates(e.target.value, newItem.endDate, newItem.parentId);
+                        setDateValidationError(error || '');
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded px-3 py-2"
                   />
                 </div>
@@ -1744,11 +2142,22 @@ const ProjectManager = () => {
                   <input
                     type="date"
                     value={newItem.endDate}
-                    onChange={(e) => setNewItem({ ...newItem, endDate: e.target.value })}
+                    onChange={(e) => {
+                      setNewItem({ ...newItem, endDate: e.target.value });
+                      if (newItem.startDate) {
+                        const error = validateDates(newItem.startDate, e.target.value, newItem.parentId);
+                        setDateValidationError(error || '');
+                      }
+                    }}
                     className="w-full border border-gray-300 rounded px-3 py-2"
                   />
                 </div>
               </div>
+              {dateValidationError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  ⚠️ {dateValidationError}
+                </div>
+              )}
               <div>
                 <label className="block text-sm font-semibold mb-1">Estimated Hours</label>
                 <input
@@ -1794,6 +2203,7 @@ const ProjectManager = () => {
                 onClick={() => {
                   setShowItemModal(false);
                   setNewItem({ name: '', type: 'task', parentId: null, status: 'pending', priority: 'medium', startDate: '', endDate: '', assignee: '', estimatedHours: 0, createInJira: false });
+                  setDateValidationError('');
                 }}
                 className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
               >
