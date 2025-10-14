@@ -110,6 +110,7 @@ const ProjectManager = () => {
     }
   }, [useBackend, backendConnected]);
     
+
   // Save to localStorage
   useEffect(() => {
     if (!useBackend) {
@@ -1133,6 +1134,15 @@ const ProjectManager = () => {
       const children = items.filter(item => item.parentId === parentId);
       
       return children.map(item => {
+        // Check if this item type should be displayed based on filters
+        const shouldDisplay = 
+          (item.type === 'epic' && timelineFilters.showEpics) ||
+          (item.type === 'story' && timelineFilters.showStories) ||
+          (item.type === 'task' && timelineFilters.showTasks) ||
+          (item.type === 'subtask' && timelineFilters.showSubtasks);
+
+        if (!shouldDisplay) return null;
+
         const startPos = getDatePosition(item.startDate, selectedProject.startDate, selectedProject.endDate);
         const endPos = getDatePosition(item.endDate, selectedProject.startDate, selectedProject.endDate);
         const width = Math.max(endPos - startPos, 2);
@@ -1143,19 +1153,26 @@ const ProjectManager = () => {
           <div key={item.id}>
             <div className="mb-4" style={{ marginLeft: `${indent * 20}px` }}>
               <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-1">
                   {hasChildren && (
                     <button onClick={() => toggleExpand(item.id)} className="hover:bg-gray-200 rounded p-1">
                       {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
                   )}
                   <span className="text-sm">{getItemIcon(item.type)}</span>
-                  <span className="font-semibold text-sm">{item.name}</span>
-                  {item.jira && (
-                    <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
-                      {item.jira.issueKey}
-                    </span>
-                  )}
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm">{item.name}</span>
+                      {item.jira && (
+                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                          {item.jira.issueKey}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {new Date(item.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} → {new Date(item.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </div>
+                  </div>
                 </div>
                 <span className="text-sm text-gray-600">{item.assignee}</span>
               </div>
@@ -1180,7 +1197,7 @@ const ProjectManager = () => {
             {isExpanded && hasChildren && renderGanttChart(items, item.id, indent + 1)}
           </div>
         );
-      });
+      }).filter(Boolean);
     };
 
     const renderBurndownChart = () => {
@@ -1490,8 +1507,13 @@ const ProjectManager = () => {
               <div className="overflow-x-auto">
                 <div className="min-w-[800px]">
                   <div className="space-y-2">
-                    {renderGanttChart(filteredItems, null, 0)}
+                    {renderGanttChart(selectedProject.items, null, 0)}
                   </div>
+                  {renderGanttChart(selectedProject.items, null, 0).filter(Boolean).length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      <p>No items match the selected filters. Try enabling more item types.</p>
+                    </div>
+                  )}
                 </div>
               </div>
 
