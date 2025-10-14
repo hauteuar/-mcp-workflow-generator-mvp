@@ -96,8 +96,19 @@ const ProjectManager = () => {
     }
   }, [projects, useBackend]);
 
+  useEffect(() => {
+    localStorage.setItem('jiraConfig', JSON.stringify(jiraConfig));
+  }, [jiraConfig]);
+
   // Auto-sync with backend
   useEffect(() => {
+    if (useBackend && backendConnected) {
+      const interval = setInterval(() => {
+        syncFromBackend();
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [useBackend, backendConnected]);
     if (useBackend && backendConnected) {
       const interval = setInterval(() => {
         syncFromBackend();
@@ -652,6 +663,11 @@ const ProjectManager = () => {
   const createJiraIssue = async (item) => {
     if (!jiraConfig.connected) return null;
     
+    if (!useBackend || !backendConnected) {
+      alert('Please connect to backend server first to use Jira integration');
+      return null;
+    }
+    
     try {
       const jiraTypeMap = { epic: 'Epic', story: 'Story', task: 'Task', subtask: 'Sub-task' };
       
@@ -689,7 +705,8 @@ const ProjectManager = () => {
         lastSynced: new Date().toISOString()
       };
     } catch (error) {
-      alert(`Error: ${error.message}`);
+      console.error('Error creating Jira issue:', error);
+      alert(`Error creating Jira issue: ${error.message}`);
       return null;
     }
   };
@@ -950,12 +967,16 @@ const ProjectManager = () => {
   };
 
   const getItemStats = () => {
-    if (!selectedProject) return { epics: 0, stories: 0, tasks: 0, subtasks: 0, review: 0, inProgress: 0, pending: 0, total: 0 };
+    if (!selectedProject || !selectedProject.items) {
+      return { epics: 0, stories: 0, tasks: 0, subtasks: 0, review: 0, inProgress: 0, pending: 0, total: 0 };
+    }
     
     let epics = 0, stories = 0, tasks = 0, subtasks = 0;
     let review = 0, inProgress = 0, pending = 0;
     
     selectedProject.items.forEach(item => {
+      if (!item) return;
+      
       if (item.type === 'epic') epics++;
       else if (item.type === 'story') stories++;
       else if (item.type === 'task') tasks++;
@@ -971,9 +992,13 @@ const ProjectManager = () => {
 
   // Render Functions
   const renderHierarchyTree = (items, parentId = null, indent = 0) => {
-    const children = items.filter(item => item.parentId === parentId);
+    if (!items || !Array.isArray(items)) return null;
+    
+    const children = items.filter(item => item && item.parentId === parentId);
     
     return children.map(item => {
+      if (!item) return null;
+      
       const isExpanded = expandedItems.has(item.id);
       const hasChildren = item.children && item.children.length > 0;
       const progress = calculateProgress(items, item.id);
@@ -1064,7 +1089,9 @@ const ProjectManager = () => {
               <button 
                 onClick={(e) => {
                   e.stopPropagation();
-                  deleteItem(selectedProject.id, item.id);
+                  if (confirm('Are you sure you want to delete this item and all its children?')) {
+                    deleteItem(selectedProject.id, item.id);
+                  }
                 }} 
                 className="text-red-600 hover:text-red-800 p-1"
                 title="Delete item"
@@ -1081,15 +1108,25 @@ const ProjectManager = () => {
   };
 
   const renderTimeline = () => {
-    if (!selectedProject) return <div>Select a project</div>;
+    if (!selectedProject) return <div className="p-4 text-gray-500">Select a project to view charts</div>;
+    if (!selectedProject.items || selectedProject.items.length === 0) {
+      return (
+        <div className="p-8 text-center text-gray-500">
+          <p className="text-lg mb-2">No items to display</p>
+          <p className="text-sm">Add some epics, stories, or tasks to see the timeline charts.</p>
+        </div>
+      );
+    }
 
     const filteredItems = selectedProject.items.filter(item => {
+      if (!item) return false;
       if (item.type === 'epic' && !timelineFilters.showEpics) return false;
       if (item.type === 'story' && !timelineFilters.showStories) return false;
       if (item.type === 'task' && !timelineFilters.showTasks) return false;
       if (item.type === 'subtask' && !timelineFilters.showSubtasks) return false;
       return true;
     });
+
 
     const getDatePosition = (date, startDate, endDate) => {
       const start = new Date(startDate).getTime();
@@ -1480,13 +1517,13 @@ const ProjectManager = () => {
   };
 
   const renderCharts = () => {
-    if (!selectedProject) return null;
+    if (!selectedProject) return <div className="p-4 text-gray-500">Select a project to view analytics</div>;
     
     const stats = getItemStats();
-    const epicData = selectedProject.items.filter(i => i.type === 'epic').map(epic => ({
+    const epicData = selectedProject.items ? selectedProject.items.filter(i => i && i.type === 'epic').map(epic => ({
       name: epic.name,
       progress: calculateProgress(selectedProject.items, epic.id)
-    }));
+    })) : [];
 
     return (
       <div className="space-y-6">
@@ -1712,7 +1749,7 @@ const ProjectManager = () => {
   };
 
   const renderHierarchy = () => {
-    if (!selectedProject) return <div>Select a project</div>;
+    if (!selectedProject) return <div className="p-4 text-gray-500">Select a project to view items</div>;
     
     const stats = getItemStats();
     const syncedItems = selectedProject.items.filter(i => i.jira).length;
@@ -1737,7 +1774,7 @@ const ProjectManager = () => {
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {jiraConfig.connected && (
+            {jiraConfig.connected && useBackend && backendConnected && (
               <button
                 onClick={importFromJira}
                 className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 flex items-center gap-2"
@@ -1776,9 +1813,15 @@ const ProjectManager = () => {
 
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <h3 className="font-bold mb-4">Hierarchy View</h3>
-          <div className="space-y-2">
-            {renderHierarchyTree(selectedProject.items, null, 0)}
-          </div>
+          {selectedProject.items && selectedProject.items.length > 0 ? (
+            <div className="space-y-2">
+              {renderHierarchyTree(selectedProject.items, null, 0)}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <p>No items yet. Click "Add Item" to create your first epic, story, or task.</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2165,7 +2208,7 @@ const ProjectManager = () => {
                   placeholder="0"
                 />
               </div>
-              {jiraConfig.connected && (
+              {jiraConfig.connected && useBackend && backendConnected && (
                 <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
                   <div className="flex items-center gap-2 mb-2">
                     <input
@@ -2185,6 +2228,13 @@ const ProjectManager = () => {
                        newItem.type === 'story' ? 'Story' : 
                        newItem.type === 'task' ? 'Task' : 'Sub-task'}
                     </strong> in project <strong>{jiraConfig.defaultProject}</strong>
+                  </p>
+                </div>
+              )}
+              {jiraConfig.connected && (!useBackend || !backendConnected) && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-xs text-amber-800">
+                    ⚠️ Backend connection required for Jira integration
                   </p>
                 </div>
               )}
@@ -2357,9 +2407,19 @@ const ProjectManager = () => {
               </div>
             ) : (
               <div className="space-y-4">
+                {!useBackend && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                    <p className="text-amber-900 font-semibold mb-2">⚠️ Backend Required</p>
+                    <p className="text-sm text-amber-800">
+                      Jira integration requires the backend server to avoid CORS issues. 
+                      Please connect to the backend first using the "Backend" button in the header.
+                    </p>
+                  </div>
+                )}
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
                   <p className="text-blue-900 mb-2"><strong>How to connect:</strong></p>
                   <ol className="text-blue-800 space-y-1 list-decimal list-inside text-xs">
+                    <li>Connect to backend server first (header button)</li>
                     <li>Go to your Jira account settings</li>
                     <li>Navigate to Security → API tokens</li>
                     <li>Click "Create API token"</li>
@@ -2422,10 +2482,20 @@ const ProjectManager = () => {
 
                 <button
                   onClick={connectToJira}
-                  className="w-full bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700"
+                  disabled={!useBackend || !backendConnected}
+                  className={`w-full px-4 py-2 rounded-lg ${
+                    useBackend && backendConnected
+                      ? 'bg-purple-600 text-white hover:bg-purple-700'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
                 >
                   Connect to Jira
                 </button>
+                {!useBackend && (
+                  <p className="text-xs text-center text-amber-600">
+                    Enable backend connection first
+                  </p>
+                )}
               </div>
             )}
 
