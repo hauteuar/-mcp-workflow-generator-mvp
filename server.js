@@ -1,7 +1,7 @@
-// server.js - lowdb Backend Server
-const express = require('express');
-const cors = require('cors');
-const { JSONFilePreset } = require('lowdb/node');
+// server.js - lowdb Backend Server (ES Modules)
+import express from 'express';
+import cors from 'cors';
+import { JSONFilePreset } from 'lowdb/node';
 
 const app = express();
 const PORT = 3001;
