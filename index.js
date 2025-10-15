@@ -109,7 +109,7 @@ const ProjectManager = () => {
       return () => clearInterval(interval);
     }
   }, [useBackend, backendConnected]);
-    
+   
 
   // Save to localStorage
   useEffect(() => {
@@ -1121,7 +1121,12 @@ const ProjectManager = () => {
       return true;
     });
 
-   
+    const getDatePosition = (date, startDate, endDate) => {
+      const start = new Date(startDate).getTime();
+      const end = new Date(endDate).getTime();
+      const current = new Date(date).getTime();
+      return ((current - start) / (end - start)) * 100;
+    };
 
     const getDatePosition = (date, startDate, endDate) => {
       const start = new Date(startDate).getTime();
