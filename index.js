@@ -28,6 +28,9 @@ const ProjectManager = () => {
   const [selectedItem, setSelectedItem] = useState(null);
   const [importPreview, setImportPreview] = useState(null);
   const [excelImportPreview, setExcelImportPreview] = useState(null);
+
+  const [showEditItemModal, setShowEditItemModal] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   
   // Filters
   const [timelineFilters, setTimelineFilters] = useState({
@@ -439,7 +442,47 @@ const ProjectManager = () => {
     
     alert('Project deleted successfully');
   };
+  const updateItem = async () => {
+  if (!selectedProject || !editingItem || !editingItem.name || !editingItem.startDate || !editingItem.endDate) {
+    alert('Please fill in all required fields');
+    return;
+  }
 
+  // Validate dates
+  const dateError = validateDates(editingItem.startDate, editingItem.endDate, editingItem.parentId);
+  if (dateError) {
+    setDateValidationError(dateError);
+    return;
+  }
+
+  setDateValidationError('');
+
+  const updatedProjects = projects.map(p => {
+    if (p.id === selectedProject.id) {
+      return {
+        ...p,
+        items: p.items.map(item => 
+          item.id === editingItem.id ? editingItem : item
+        )
+      };
+    }
+    return p;
+  });
+  
+  setProjects(updatedProjects);
+  
+  // Update selectedProject immediately
+  const updated = updatedProjects.find(p => p.id === selectedProject.id);
+  if (updated) setSelectedProject(updated);
+  
+  if (useBackend) {
+    await saveProjectToBackend(updated);
+  }
+  
+  setEditingItem(null);
+  setDateValidationError('');
+  setShowEditItemModal(false);
+};
   // Validate dates
   const validateDates = (startDate, endDate, parentId = null) => {
     if (!startDate || !endDate) {
@@ -1072,11 +1115,22 @@ const ProjectManager = () => {
               <button 
                 onClick={(e) => { 
                   e.stopPropagation();
+                  setEditingItem({...item}); 
+                  setShowEditItemModal(true); 
+                }} 
+                className="text-blue-600 hover:text-blue-800 p-1"
+                title="Edit item"
+              >
+                <Settings size={16} />
+              </button>
+              <button 
+                onClick={(e) => { 
+                  e.stopPropagation();
                   setSelectedItem(item); 
                   setShowItemDetailsModal(true); 
                 }} 
-                className="text-blue-600 hover:text-blue-800 p-1"
-                title="View details"
+                className="text-green-600 hover:text-green-800 p-1"
+                title="View details & comments"
               >
                 <MessageSquare size={16} />
               </button>
@@ -1092,6 +1146,7 @@ const ProjectManager = () => {
               >
                 <Trash2 size={16} />
               </button>
+            </div>
             </div>
           </div>
           
@@ -1128,13 +1183,7 @@ const ProjectManager = () => {
       return ((current - start) / (end - start)) * 100;
     };
 
-    const getDatePosition = (date, startDate, endDate) => {
-      const start = new Date(startDate).getTime();
-      const end = new Date(endDate).getTime();
-      const current = new Date(date).getTime();
-      return ((current - start) / (end - start)) * 100;
-    };
-
+ 
     const renderGanttChart = (items, parentId = null, indent = 0) => {
       const children = items.filter(item => item.parentId === parentId);
       
@@ -2281,7 +2330,224 @@ const ProjectManager = () => {
           </div>
         </div>
       )}
-
+      {/* Edit Item Modal */}
+{showEditItemModal && editingItem && selectedProject && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+      <h2 className="text-xl font-bold mb-4">Edit Item</h2>
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-semibold mb-2">Type</label>
+          <div className="flex gap-2">
+            {['epic', 'story', 'task', 'subtask'].map(type => (
+              <button
+                key={type}
+                onClick={() => {
+                  setEditingItem({...editingItem, type});
+                  setDateValidationError('');
+                }}
+                className={`flex-1 px-3 py-2 rounded border text-sm ${
+                  editingItem.type === type 
+                    ? 'bg-blue-600 text-white border-blue-600' 
+                    : 'bg-white text-gray-700 border-gray-300'
+                }`}
+              >
+                {getItemIcon(type)} {type.charAt(0).toUpperCase() + type.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-semibold mb-1">Parent Item (Optional)</label>
+          <select
+            value={editingItem.parentId || ''}
+            onChange={(e) => {
+              const parentId = e.target.value ? parseInt(e.target.value) : null;
+              setEditingItem({...editingItem, parentId});
+              if (editingItem.startDate && editingItem.endDate) {
+                const error = validateDates(editingItem.startDate, editingItem.endDate, parentId);
+                setDateValidationError(error || '');
+              }
+            }}
+            className="w-full border border-gray-300 rounded px-3 py-2"
+          >
+            <option value="">None (Top Level)</option>
+            {selectedProject.items
+              .filter(item => {
+                // Don't allow selecting itself or its descendants as parent
+                if (item.id === editingItem.id) return false;
+                
+                // Filter based on type hierarchy
+                if (editingItem.type === 'epic') return false;
+                if (editingItem.type === 'story') return item.type === 'epic';
+                if (editingItem.type === 'task') return item.type === 'story';
+                if (editingItem.type === 'subtask') return item.type === 'task';
+                return false;
+              })
+              .map(item => {
+                let displayName = item.name;
+                if (item.type === 'story' || item.type === 'task') {
+                  const parentItem = selectedProject.items.find(i => i.id === item.parentId);
+                  if (parentItem) {
+                    displayName = `${item.name} (under ${parentItem.name})`;
+                  }
+                }
+                return (
+                  <option key={item.id} value={item.id}>
+                    {getItemIcon(item.type)} {displayName}
+                  </option>
+                );
+              })
+            }
+          </select>
+          {editingItem.parentId && selectedProject.items.find(i => i.id === editingItem.parentId) && (
+            <p className="text-xs text-blue-600 mt-1">
+              📅 Parent dates: {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).startDate).toLocaleDateString()} - {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).endDate).toLocaleDateString()}
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="block text-sm font-semibold mb-1">Item Name</label>
+          <input
+            type="text"
+            value={editingItem.name}
+            onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
+            className="w-full border border-gray-300 rounded px-3 py-2"
+            placeholder="Enter item name"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-semibold mb-1">Status</label>
+            <select
+              value={editingItem.status}
+              onChange={(e) => setEditingItem({ ...editingItem, status: e.target.value })}
+              className="w-full border border-gray-300 rounded px-3 py-2"
+            >
+              <option value="pending">Pending</option>
+              <option value="in-progress">In Progress</option>
+              <option value="review">Review</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-1">Priority</label>
+            <select
+              value={editingItem.priority}
+              onChange={(e) => setEditingItem({ ...editingItem, priority: e.target.value })}
+              className="w-full border border-gray-300 rounded px-3 py-2"
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="block text-sm font-semibold mb-1">Assignee</label>
+          <input
+            type="text"
+            value={editingItem.assignee}
+            onChange={(e) => setEditingItem({ ...editingItem, assignee: e.target.value })}
+            className="w-full border border-gray-300 rounded px-3 py-2"
+            placeholder="Enter assignee name"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-semibold mb-1">Start Date</label>
+            <input
+              type="date"
+              value={editingItem.startDate}
+              onChange={(e) => {
+                setEditingItem({ ...editingItem, startDate: e.target.value });
+                if (editingItem.endDate) {
+                  const error = validateDates(e.target.value, editingItem.endDate, editingItem.parentId);
+                  setDateValidationError(error || '');
+                }
+              }}
+              className="w-full border border-gray-300 rounded px-3 py-2"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-1">End Date</label>
+            <input
+              type="date"
+              value={editingItem.endDate}
+              onChange={(e) => {
+                setEditingItem({ ...editingItem, endDate: e.target.value });
+                if (editingItem.startDate) {
+                  const error = validateDates(editingItem.startDate, e.target.value, editingItem.parentId);
+                  setDateValidationError(error || '');
+                }
+              }}
+              className="w-full border border-gray-300 rounded px-3 py-2"
+            />
+          </div>
+        </div>
+        {dateValidationError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+            ⚠️ {dateValidationError}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="block text-sm font-semibold mb-1">Estimated Hours</label>
+            <input
+              type="number"
+              value={editingItem.estimatedHours}
+              onChange={(e) => setEditingItem({ ...editingItem, estimatedHours: parseInt(e.target.value) || 0 })}
+              className="w-full border border-gray-300 rounded px-3 py-2"
+              placeholder="0"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-1">Actual Hours</label>
+            <input
+              type="number"
+              value={editingItem.actualHours}
+              onChange={(e) => setEditingItem({ ...editingItem, actualHours: parseInt(e.target.value) || 0 })}
+              className="w-full border border-gray-300 rounded px-3 py-2"
+              placeholder="0"
+            />
+          </div>
+        </div>
+        {editingItem.jira && (
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-purple-900">🔗 Synced with Jira</span>
+              <a 
+                href={editingItem.jira.issueUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-xs text-purple-700 hover:underline"
+              >
+                {editingItem.jira.issueKey}
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-2 mt-6">
+        <button
+          onClick={updateItem}
+          className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+        >
+          Save Changes
+        </button>
+        <button
+          onClick={() => {
+            setShowEditItemModal(false);
+            setEditingItem(null);
+            setDateValidationError('');
+          }}
+          className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+)}
       {/* Item Details Modal */}
       {showItemDetailsModal && selectedItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
