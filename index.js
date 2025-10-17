@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Calendar, BarChart3, Trash2, Upload, Settings, Link2, ExternalLink, MessageSquare, RefreshCw, CheckCheck, ChevronRight, ChevronDown, Download, TrendingUp, PieChart, Wifi, WifiOff } from 'lucide-react';
+import { Plus, Calendar, BarChart3, Trash2, Upload, Settings, Link2, ExternalLink, MessageSquare, RefreshCw, CheckCheck, ChevronRight, ChevronDown, Download, TrendingUp, PieChart, Wifi, WifiOff, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const ProjectManager = () => {
@@ -23,14 +23,24 @@ const ProjectManager = () => {
   const [showJiraSettingsModal, setShowJiraSettingsModal] = useState(false);
   const [showItemDetailsModal, setShowItemDetailsModal] = useState(false);
   const [showExcelImportModal, setShowExcelImportModal] = useState(false);
+  const [showEditItemModal, setShowEditItemModal] = useState(false);
   
   // Selected Items
   const [selectedItem, setSelectedItem] = useState(null);
+  const [editingItem, setEditingItem] = useState(null);
   const [importPreview, setImportPreview] = useState(null);
   const [excelImportPreview, setExcelImportPreview] = useState(null);
-
-  const [showEditItemModal, setShowEditItemModal] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
+  
+  // Search and Filters
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchFilters, setSearchFilters] = useState({
+    assignee: '',
+    status: 'all',
+    priority: 'all',
+    type: 'all',
+    dateRange: 'all'
+  });
+  const [showSearchFilters, setShowSearchFilters] = useState(false);
   
   // Filters
   const [timelineFilters, setTimelineFilters] = useState({
@@ -75,6 +85,7 @@ const ProjectManager = () => {
   });
 
   const [dateValidationError, setDateValidationError] = useState('');
+  const [projectDateError, setProjectDateError] = useState('');
 
   const [newComment, setNewComment] = useState('');
   const [postToJira, setPostToJira] = useState(false);
@@ -112,18 +123,6 @@ const ProjectManager = () => {
       return () => clearInterval(interval);
     }
   }, [useBackend, backendConnected]);
-   
-
-  // Save to localStorage
-  useEffect(() => {
-    if (!useBackend) {
-      localStorage.setItem('projectManagerData', JSON.stringify(projects));
-    }
-  }, [projects, useBackend]);
-
-  useEffect(() => {
-    localStorage.setItem('jiraConfig', JSON.stringify(jiraConfig));
-  }, [jiraConfig]);
 
   // Load initial data
   const loadInitialData = () => {
@@ -290,17 +289,13 @@ const ProjectManager = () => {
       if (response.ok) {
         const backendData = await response.json();
         
-        // Merge backend data with local data intelligently
-        // Only update if backend has newer data
         const mergedProjects = [...projects];
         
         backendData.forEach(backendProject => {
           const localIndex = mergedProjects.findIndex(p => p.id === backendProject.id);
           if (localIndex === -1) {
-            // New project from backend, add it
             mergedProjects.push(backendProject);
           } else {
-            // Project exists, update it with backend data
             mergedProjects[localIndex] = backendProject;
           }
         });
@@ -317,7 +312,6 @@ const ProjectManager = () => {
     if (!useBackend) return;
     
     try {
-      // Always use PUT with the project ID to update or create
       const response = await fetch(`${backendUrl}/projects/${project.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -329,6 +323,18 @@ const ProjectManager = () => {
       }
     } catch (error) {
       console.error('Error saving to backend:', error);
+    }
+  };
+
+  const deleteProjectFromBackend = async (projectId) => {
+    if (!useBackend) return;
+    
+    try {
+      await fetch(`${backendUrl}/projects/${projectId}`, {
+        method: 'DELETE'
+      });
+    } catch (error) {
+      console.error('Error deleting from backend:', error);
     }
   };
 
@@ -385,6 +391,112 @@ const ProjectManager = () => {
     };
   };
 
+  // Search and Filter Functions
+  const filterItems = (items) => {
+    if (!items) return [];
+    
+    return items.filter(item => {
+      // Text search across name, assignee, and type
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesName = item.name.toLowerCase().includes(query);
+        const matchesAssignee = item.assignee?.toLowerCase().includes(query);
+        const matchesType = item.type.toLowerCase().includes(query);
+        const matchesJira = item.jira?.issueKey.toLowerCase().includes(query);
+        
+        if (!matchesName && !matchesAssignee && !matchesType && !matchesJira) {
+          return false;
+        }
+      }
+      
+      // Filter by assignee
+      if (searchFilters.assignee && item.assignee !== searchFilters.assignee) {
+        return false;
+      }
+      
+      // Filter by status
+      if (searchFilters.status !== 'all' && item.status !== searchFilters.status) {
+        return false;
+      }
+      
+      // Filter by priority
+      if (searchFilters.priority !== 'all' && item.priority !== searchFilters.priority) {
+        return false;
+      }
+      
+      // Filter by type
+      if (searchFilters.type !== 'all' && item.type !== searchFilters.type) {
+        return false;
+      }
+      
+      // Filter by date range
+      if (searchFilters.dateRange !== 'all') {
+        const today = new Date();
+        const itemEnd = new Date(item.endDate);
+        const daysDiff = Math.ceil((itemEnd - today) / (1000 * 60 * 60 * 24));
+        
+        if (searchFilters.dateRange === 'overdue' && daysDiff >= 0) return false;
+        if (searchFilters.dateRange === 'today' && daysDiff !== 0) return false;
+        if (searchFilters.dateRange === 'week' && (daysDiff < 0 || daysDiff > 7)) return false;
+        if (searchFilters.dateRange === 'month' && (daysDiff < 0 || daysDiff > 30)) return false;
+      }
+      
+      return true;
+    });
+  };
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchFilters({
+      assignee: '',
+      status: 'all',
+      priority: 'all',
+      type: 'all',
+      dateRange: 'all'
+    });
+  };
+
+  const getUniqueAssignees = () => {
+    if (!selectedProject?.items) return [];
+    const assignees = new Set();
+    selectedProject.items.forEach(item => {
+      if (item.assignee) assignees.add(item.assignee);
+    });
+    return Array.from(assignees).sort();
+  };
+
+  // Validate dates
+  const validateDates = (startDate, endDate, parentId = null) => {
+    if (!startDate || !endDate) {
+      return 'Start date and end date are required';
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (end < start) {
+      return 'End date cannot be before start date';
+    }
+
+    if (parentId && selectedProject) {
+      const parent = selectedProject.items.find(i => i.id === parentId);
+      if (parent) {
+        const parentStart = new Date(parent.startDate);
+        const parentEnd = new Date(parent.endDate);
+
+        if (start < parentStart) {
+          return `Start date cannot be before parent's start date (${new Date(parent.startDate).toLocaleDateString()})`;
+        }
+
+        if (end > parentEnd) {
+          return `End date cannot be after parent's end date (${new Date(parent.endDate).toLocaleDateString()})`;
+        }
+      }
+    }
+
+    return null;
+  };
+
   // CRUD Operations
   const addProject = async () => {
     if (!newProject.name || !newProject.startDate || !newProject.endDate) {
@@ -392,7 +504,6 @@ const ProjectManager = () => {
       return;
     }
 
-    // Validate dates
     const start = new Date(newProject.startDate);
     const end = new Date(newProject.endDate);
     
@@ -430,7 +541,6 @@ const ProjectManager = () => {
     const updatedProjects = projects.filter(p => p.id !== projectId);
     setProjects(updatedProjects);
     
-    // Clear selected project if it's the one being deleted
     if (selectedProject && selectedProject.id === projectId) {
       setSelectedProject(null);
       setActiveView('dashboard');
@@ -442,80 +552,6 @@ const ProjectManager = () => {
     
     alert('Project deleted successfully');
   };
-  const updateItem = async () => {
-  if (!selectedProject || !editingItem || !editingItem.name || !editingItem.startDate || !editingItem.endDate) {
-    alert('Please fill in all required fields');
-    return;
-  }
-
-  // Validate dates
-  const dateError = validateDates(editingItem.startDate, editingItem.endDate, editingItem.parentId);
-  if (dateError) {
-    setDateValidationError(dateError);
-    return;
-  }
-
-  setDateValidationError('');
-
-  const updatedProjects = projects.map(p => {
-    if (p.id === selectedProject.id) {
-      return {
-        ...p,
-        items: p.items.map(item => 
-          item.id === editingItem.id ? editingItem : item
-        )
-      };
-    }
-    return p;
-  });
-  
-  setProjects(updatedProjects);
-  
-  // Update selectedProject immediately
-  const updated = updatedProjects.find(p => p.id === selectedProject.id);
-  if (updated) setSelectedProject(updated);
-  
-  if (useBackend) {
-    await saveProjectToBackend(updated);
-  }
-  
-  setEditingItem(null);
-  setDateValidationError('');
-  setShowEditItemModal(false);
-};
-  // Validate dates
-  const validateDates = (startDate, endDate, parentId = null) => {
-    if (!startDate || !endDate) {
-      return 'Start date and end date are required';
-    }
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    // Check if end date is before start date
-    if (end < start) {
-      return 'End date cannot be before start date';
-    }
-
-    // Check parent constraints if parent exists
-    if (parentId && selectedProject) {
-      const parent = selectedProject.items.find(i => i.id === parentId);
-      if (parent) {
-        const parentStart = new Date(parent.startDate);
-        const parentEnd = new Date(parent.endDate);
-
-        if (start < parentStart) {
-          return `Start date cannot be before parent's start date (${new Date(parent.startDate).toLocaleDateString()})`;
-        }
-
-        if (end > parentEnd) {
-          return `End date cannot be after parent's end date (${new Date(parent.endDate).toLocaleDateString()})`;
-        }
-      }
-    }
-
-    return null;
-  };
 
   const addItem = async () => {
     if (!selectedProject || !newItem.name || !newItem.startDate || !newItem.endDate) {
@@ -523,7 +559,6 @@ const ProjectManager = () => {
       return;
     }
 
-    // Validate dates
     const dateError = validateDates(newItem.startDate, newItem.endDate, newItem.parentId);
     if (dateError) {
       setDateValidationError(dateError);
@@ -574,7 +609,6 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
-    // Update selectedProject immediately
     const updated = updatedProjects.find(p => p.id === selectedProject.id);
     if (updated) setSelectedProject(updated);
     
@@ -585,6 +619,46 @@ const ProjectManager = () => {
     setNewItem({ name: '', type: 'task', parentId: null, status: 'pending', priority: 'medium', startDate: '', endDate: '', assignee: '', estimatedHours: 0, createInJira: false });
     setDateValidationError('');
     setShowItemModal(false);
+  };
+
+  const updateItem = async () => {
+    if (!selectedProject || !editingItem || !editingItem.name || !editingItem.startDate || !editingItem.endDate) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    const dateError = validateDates(editingItem.startDate, editingItem.endDate, editingItem.parentId);
+    if (dateError) {
+      setDateValidationError(dateError);
+      return;
+    }
+
+    setDateValidationError('');
+
+    const updatedProjects = projects.map(p => {
+      if (p.id === selectedProject.id) {
+        return {
+          ...p,
+          items: p.items.map(item => 
+            item.id === editingItem.id ? editingItem : item
+          )
+        };
+      }
+      return p;
+    });
+    
+    setProjects(updatedProjects);
+    
+    const updated = updatedProjects.find(p => p.id === selectedProject.id);
+    if (updated) setSelectedProject(updated);
+    
+    if (useBackend) {
+      await saveProjectToBackend(updated);
+    }
+    
+    setEditingItem(null);
+    setDateValidationError('');
+    setShowEditItemModal(false);
   };
 
   const updateItemStatus = async (projectId, itemId, newStatus) => {
@@ -602,7 +676,6 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
-    // Update selectedProject immediately
     if (selectedProject && selectedProject.id === projectId) {
       const updated = updatedProjects.find(p => p.id === projectId);
       if (updated) setSelectedProject(updated);
@@ -645,7 +718,6 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
-    // Update selectedProject immediately
     if (selectedProject && selectedProject.id === projectId) {
       const updated = updatedProjects.find(p => p.id === projectId);
       if (updated) setSelectedProject(updated);
@@ -684,7 +756,6 @@ const ProjectManager = () => {
 
     setProjects(updatedProjects);
     
-    // Update selectedProject and selectedItem immediately
     const updatedProject = updatedProjects.find(p => p.id === selectedProject.id);
     if (updatedProject) {
       setSelectedProject(updatedProject);
@@ -748,6 +819,31 @@ const ProjectManager = () => {
     }
   };
 
+  const syncItemToJira = async (item) => {
+    const jiraIssue = await createJiraIssue(item);
+    if (jiraIssue) {
+      const updatedProjects = projects.map(p => {
+        if (p.id === selectedProject.id) {
+          return {
+            ...p,
+            items: p.items.map(i => 
+              i.id === item.id ? { ...i, jira: jiraIssue } : i
+            )
+          };
+        }
+        return p;
+      });
+      
+      setProjects(updatedProjects);
+      const updated = updatedProjects.find(p => p.id === selectedProject.id);
+      if (updated) setSelectedProject(updated);
+      
+      if (useBackend) {
+        await saveProjectToBackend(updated);
+      }
+    }
+  };
+
   const connectToJira = () => {
     if (jiraConfig.url && jiraConfig.email && jiraConfig.apiToken && jiraConfig.defaultProject) {
       setJiraConfig({ ...jiraConfig, connected: true });
@@ -765,8 +861,60 @@ const ProjectManager = () => {
     alert('Disconnected from Jira');
   };
 
+  const importFromJira = async () => {
+    if (!jiraConfig.connected || !useBackend || !backendConnected) {
+      alert('Please ensure both backend and Jira are connected');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${backendUrl}/jira/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jiraConfig })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        alert(`Failed to import from Jira: ${errorData.error || 'Unknown error'}`);
+        return;
+      }
+
+      const data = await response.json();
+      setImportPreview(data.items);
+      setShowImportModal(true);
+    } catch (error) {
+      console.error('Error importing from Jira:', error);
+      alert(`Error importing from Jira: ${error.message}`);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!selectedProject || !importPreview) return;
+
+    const updatedProjects = projects.map(p => {
+      if (p.id === selectedProject.id) {
+        return {
+          ...p,
+          items: [...p.items, ...importPreview]
+        };
+      }
+      return p;
+    });
+
+    setProjects(updatedProjects);
+    
+    if (useBackend) {
+      const updated = updatedProjects.find(p => p.id === selectedProject.id);
+      await saveProjectToBackend(updated);
+    }
+    
+    setShowImportModal(false);
+    setImportPreview(null);
+    alert(`Successfully imported ${importPreview.length} items from Jira!`);
+  };
+
   const downloadExcelTemplate = () => {
-    // Create a template Excel file
     const template = [
       {
         'Name': 'User Authentication System',
@@ -807,17 +955,9 @@ const ProjectManager = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
     
-    // Set column widths
     ws['!cols'] = [
-      { wch: 30 }, // Name
-      { wch: 12 }, // Type
-      { wch: 15 }, // Status
-      { wch: 10 }, // Priority
-      { wch: 15 }, // Assignee
-      { wch: 12 }, // Start Date
-      { wch: 12 }, // End Date
-      { wch: 15 }, // Estimated Hours
-      { wch: 30 }  // Parent
+      { wch: 30 }, { wch: 12 }, { wch: 15 }, { wch: 10 }, { wch: 15 },
+      { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 30 }
     ];
 
     XLSX.writeFile(wb, 'project-manager-template.xlsx');
@@ -842,9 +982,7 @@ const ProjectManager = () => {
         return;
       }
 
-      // Map Excel columns to our format
       const mappedItems = jsonData.map((row, index) => {
-        // Try to find columns (case-insensitive)
         const getField = (possibleNames) => {
           for (const name of possibleNames) {
             const value = row[name] || row[name.toLowerCase()] || row[name.toUpperCase()];
@@ -865,35 +1003,29 @@ const ProjectManager = () => {
         const estimatedHours = getField(['Estimated Hours', 'Estimate', 'Hours', 'Time Estimate']);
         const parentName = getField(['Parent', 'Parent Item', 'Parent Task']);
 
-        // Validate and normalize type
         const normalizedType = type ? 
           (type.toLowerCase().includes('epic') ? 'epic' :
            type.toLowerCase().includes('story') ? 'story' :
            type.toLowerCase().includes('subtask') || type.toLowerCase().includes('sub-task') ? 'subtask' :
            'task') : 'task';
 
-        // Validate and normalize status
         const normalizedStatus = status ?
           (status.toLowerCase().includes('review') || status.toLowerCase().includes('done') ? 'review' :
            status.toLowerCase().includes('progress') || status.toLowerCase().includes('active') ? 'in-progress' :
            'pending') : 'pending';
 
-        // Validate and normalize priority
         const normalizedPriority = priority ?
           (priority.toLowerCase().includes('high') || priority.toLowerCase().includes('critical') ? 'high' :
            priority.toLowerCase().includes('medium') || priority.toLowerCase().includes('normal') ? 'medium' :
            'low') : 'medium';
 
-        // Parse dates
         const parseDate = (dateValue) => {
           if (!dateValue) return new Date().toISOString().split('T')[0];
           
           try {
-            // If it's already a Date object from Excel
             if (dateValue instanceof Date) {
               return dateValue.toISOString().split('T')[0];
             }
-            // If it's a string
             const parsed = new Date(dateValue);
             if (!isNaN(parsed.getTime())) {
               return parsed.toISOString().split('T')[0];
@@ -934,7 +1066,6 @@ const ProjectManager = () => {
         return;
       }
 
-      // Try to match parent-child relationships by name
       mappedItems.forEach(item => {
         if (item.parentName) {
           const parent = mappedItems.find(p => 
@@ -953,7 +1084,6 @@ const ProjectManager = () => {
       setExcelImportPreview(mappedItems);
       setShowExcelImportModal(true);
       
-      // Clear the file input
       event.target.value = '';
     } catch (error) {
       console.error('Excel import error:', error);
@@ -964,7 +1094,6 @@ const ProjectManager = () => {
   const confirmExcelImport = async () => {
     if (!selectedProject || !excelImportPreview) return;
 
-    // Clean up the items (remove temporary fields)
     const cleanedItems = excelImportPreview.map(item => {
       const { _excelRow, parentName, ...cleanItem } = item;
       return cleanItem;
@@ -1001,6 +1130,10 @@ const ProjectManager = () => {
     link.download = `project-manager-backup-${new Date().toISOString().split('T')[0]}.json`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  const exportChart = () => {
+    alert('Chart export feature coming soon!');
   };
 
   const getItemStats = () => {
@@ -1147,7 +1280,6 @@ const ProjectManager = () => {
                 <Trash2 size={16} />
               </button>
             </div>
-            </div>
           </div>
           
           {isExpanded && hasChildren && renderHierarchyTree(items, item.id, indent + 1)}
@@ -1167,15 +1299,6 @@ const ProjectManager = () => {
       );
     }
 
-    const filteredItems = selectedProject.items.filter(item => {
-      if (!item) return false;
-      if (item.type === 'epic' && !timelineFilters.showEpics) return false;
-      if (item.type === 'story' && !timelineFilters.showStories) return false;
-      if (item.type === 'task' && !timelineFilters.showTasks) return false;
-      if (item.type === 'subtask' && !timelineFilters.showSubtasks) return false;
-      return true;
-    });
-
     const getDatePosition = (date, startDate, endDate) => {
       const start = new Date(startDate).getTime();
       const end = new Date(endDate).getTime();
@@ -1183,12 +1306,10 @@ const ProjectManager = () => {
       return ((current - start) / (end - start)) * 100;
     };
 
- 
     const renderGanttChart = (items, parentId = null, indent = 0) => {
       const children = items.filter(item => item.parentId === parentId);
       
       return children.map(item => {
-        // Check if this item type should be displayed based on filters
         const shouldDisplay = 
           (item.type === 'epic' && timelineFilters.showEpics) ||
           (item.type === 'story' && timelineFilters.showStories) ||
@@ -1824,6 +1945,11 @@ const ProjectManager = () => {
     const stats = getItemStats();
     const syncedItems = selectedProject.items.filter(i => i.jira).length;
     const totalItems = selectedProject.items.length;
+    
+    const filteredItems = filterItems(selectedProject.items);
+    const isSearchActive = searchQuery || searchFilters.assignee || searchFilters.status !== 'all' || 
+                          searchFilters.priority !== 'all' || searchFilters.type !== 'all' || 
+                          searchFilters.dateRange !== 'all';
 
     return (
       <div className="space-y-6">
@@ -1881,12 +2007,311 @@ const ProjectManager = () => {
           </div>
         </div>
 
+        {/* Search and Filter Bar */}
         <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <h3 className="font-bold mb-4">Hierarchy View</h3>
-          {selectedProject.items && selectedProject.items.length > 0 ? (
-            <div className="space-y-2">
-              {renderHierarchyTree(selectedProject.items, null, 0)}
+          <div className="flex gap-2 items-center mb-3">
+            <div className="flex-1 relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by name, assignee, type, or Jira key..."
+                className="w-full border border-gray-300 rounded-lg px-4 py-2 pr-10"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              )}
             </div>
+            <button
+              onClick={() => setShowSearchFilters(!showSearchFilters)}
+              className={`px-4 py-2 rounded-lg border flex items-center gap-2 ${
+                showSearchFilters ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-gray-700'
+              }`}
+            >
+              <Settings size={18} />
+              Filters
+              {isSearchActive && !searchQuery && (
+                <span className="bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">
+                  Active
+                </span>
+              )}
+            </button>
+            {isSearchActive && (
+              <button
+                onClick={clearSearch}
+                className="px-4 py-2 rounded-lg bg-red-50 border border-red-300 text-red-700 hover:bg-red-100"
+              >
+                Clear All
+              </button>
+            )}
+          </div>
+
+          {/* Filter Options */}
+          {showSearchFilters && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-gray-200">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Assignee</label>
+                <select
+                  value={searchFilters.assignee}
+                  onChange={(e) => setSearchFilters({...searchFilters, assignee: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                >
+                  <option value="">All Assignees</option>
+                  {getUniqueAssignees().map(assignee => (
+                    <option key={assignee} value={assignee}>{assignee}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Status</label>
+                <select
+                  value={searchFilters.status}
+                  onChange={(e) => setSearchFilters({...searchFilters, status: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                >
+                  <option value="all">All Status</option>
+                  <option value="pending">Pending</option>
+                  <option value="in-progress">In Progress</option>
+                  <option value="review">Review</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Priority</label>
+                <select
+                  value={searchFilters.priority}
+                  onChange={(e) => setSearchFilters({...searchFilters, priority: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                >
+                  <option value="all">All Priorities</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
+                <select
+                  value={searchFilters.type}
+                  onChange={(e) => setSearchFilters({...searchFilters, type: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                >
+                  <option value="all">All Types</option>
+                  <option value="epic">📦 Epic</option>
+                  <option value="story">📖 Story</option>
+                  <option value="task">✓ Task</option>
+                  <option value="subtask">○ Subtask</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Due Date</label>
+                <select
+                  value={searchFilters.dateRange}
+                  onChange={(e) => setSearchFilters({...searchFilters, dateRange: e.target.value})}
+                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
+                >
+                  <option value="all">All Dates</option>
+                  <option value="overdue">Overdue</option>
+                  <option value="today">Due Today</option>
+                  <option value="week">Due This Week</option>
+                  <option value="month">Due This Month</option>
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* Search Results Summary */}
+          {isSearchActive && (
+            <div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">
+              <span className="text-sm text-gray-600">
+                Showing <strong>{filteredItems.length}</strong> of <strong>{totalItems}</strong> items
+              </span>
+              <div className="flex gap-2 flex-wrap">
+                {searchFilters.assignee && (
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                    Assignee: {searchFilters.assignee}
+                  </span>
+                )}
+                {searchFilters.status !== 'all' && (
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                    Status: {searchFilters.status}
+                  </span>
+                )}
+                {searchFilters.priority !== 'all' && (
+                  <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">
+                    Priority: {searchFilters.priority}
+                  </span>
+                )}
+                {searchFilters.type !== 'all' && (
+                
+                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                    Type: {searchFilters.type}
+                  </span>
+                )}
+                {searchFilters.dateRange !== 'all' && (
+                  <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
+                    Due: {searchFilters.dateRange}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <h3 className="font-bold mb-4">
+            Hierarchy View
+            {isSearchActive && (
+              <span className="ml-2 text-sm font-normal text-gray-600">
+                (Filtered results shown below)
+              </span>
+            )}
+          </h3>
+          {selectedProject.items && selectedProject.items.length > 0 ? (
+            filteredItems.length > 0 ? (
+              <div className="space-y-2">
+                {isSearchActive ? (
+                  // Show flat list when searching
+                  filteredItems.map(item => {
+                    const progress = calculateProgress(selectedProject.items, item.id);
+                    const hours = calculateRollupHours(selectedProject.items, item.id);
+                    
+                    // Show parent breadcrumb
+                    const getBreadcrumb = (itemId) => {
+                      const item = selectedProject.items.find(i => i.id === itemId);
+                      if (!item || !item.parentId) return '';
+                      const parent = selectedProject.items.find(i => i.id === item.parentId);
+                      if (!parent) return '';
+                      return getBreadcrumb(parent.id) + parent.name + ' → ';
+                    };
+                    
+                    return (
+                      <div key={item.id} className="border-l-2 border-gray-200">
+                        <div className={`flex items-center gap-2 p-2 hover:bg-gray-50 ${getLevelColor(item.level)} border rounded mb-1`}>
+                          <span className="text-lg">{getItemIcon(item.type)}</span>
+                          
+                          <div className="flex-1">
+                            {getBreadcrumb(item.id) && (
+                              <div className="text-xs text-gray-500 mb-1">
+                                {getBreadcrumb(item.id)}
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold">{item.name}</span>
+                              {item.jira ? (
+                                <a 
+                                  href={item.jira.issueUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-semibold hover:bg-purple-200 flex items-center gap-1"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="View in Jira"
+                                >
+                                  {item.jira.issueKey}
+                                  <ExternalLink size={12} />
+                                </a>
+                              ) : jiraConfig.connected && (
+                                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded" title="Not synced to Jira">
+                                  Not in Jira
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              {item.assignee} • {hours.actual}h / {hours.estimated}h • {Math.round(progress)}% complete • Due: {new Date(item.endDate).toLocaleDateString()}
+                            </div>
+                          </div>
+                          
+                          <select
+                            value={item.status}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              updateItemStatus(selectedProject.id, item.id, e.target.value);
+                            }}
+                            className={`px-2 py-1 rounded text-xs font-semibold border-0 ${
+                              item.status === 'review' ? 'bg-green-100 text-green-700' :
+                              item.status === 'in-progress' ? 'bg-blue-100 text-blue-700' :
+                              'bg-gray-100 text-gray-700'
+                            }`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <option value="pending">Pending</option>
+                            <option value="in-progress">In Progress</option>
+                            <option value="review">Review</option>
+                          </select>
+                          
+                          <div className="flex gap-1">
+                            {!item.jira && jiraConfig.connected && (
+                              <button 
+                                onClick={(e) => { 
+                                  e.stopPropagation();
+                                  syncItemToJira(item);
+                                }} 
+                                className="text-purple-600 hover:text-purple-800 p-1"
+                                title="Sync to Jira"
+                              >
+                                <Link2 size={16} />
+                              </button>
+                            )}
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation();
+                                setEditingItem({...item}); 
+                                setShowEditItemModal(true); 
+                              }} 
+                              className="text-blue-600 hover:text-blue-800 p-1"
+                              title="Edit item"
+                            >
+                              <Settings size={16} />
+                            </button>
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation();
+                                setSelectedItem(item); 
+                                setShowItemDetailsModal(true); 
+                              }} 
+                              className="text-green-600 hover:text-green-800 p-1"
+                              title="View details & comments"
+                            >
+                              <MessageSquare size={16} />
+                            </button>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm('Are you sure you want to delete this item and all its children?')) {
+                                  deleteItem(selectedProject.id, item.id);
+                                }
+                              }} 
+                              className="text-red-600 hover:text-red-800 p-1"
+                              title="Delete item"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  // Show hierarchy when not searching
+                  renderHierarchyTree(selectedProject.items, null, 0)
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <p className="text-lg mb-2">No items match your search</p>
+                <p className="text-sm">Try adjusting your filters or search query</p>
+                <button
+                  onClick={clearSearch}
+                  className="mt-3 text-blue-600 hover:text-blue-800 text-sm font-semibold"
+                >
+                  Clear all filters
+                </button>
+              </div>
+            )
           ) : (
             <div className="text-center py-8 text-gray-500">
               <p>No items yet. Click "Add Item" to create your first epic, story, or task.</p>
@@ -1917,7 +2342,7 @@ const ProjectManager = () => {
               )}
             </h1>
             <div className="text-xs text-gray-500 mt-1">
-              Multi-Level Hierarchy • Advanced Analytics
+              Multi-Level Hierarchy • Advanced Analytics • Search & Filter
               {lastSyncTime && ` • Last sync: ${new Date(lastSyncTime).toLocaleTimeString()}`}
             </div>
           </div>
@@ -2134,7 +2559,6 @@ const ProjectManager = () => {
                   onChange={(e) => {
                     const parentId = e.target.value ? parseInt(e.target.value) : null;
                     setNewItem({...newItem, parentId});
-                    // Revalidate dates when parent changes
                     if (newItem.startDate && newItem.endDate) {
                       const error = validateDates(newItem.startDate, newItem.endDate, parentId);
                       setDateValidationError(error || '');
@@ -2152,7 +2576,6 @@ const ProjectManager = () => {
                       return false;
                     })
                     .map(item => {
-                      // Show epic name for better context
                       let displayName = item.name;
                       if (item.type === 'story' || item.type === 'task') {
                         const parentItem = selectedProject.items.find(i => i.id === item.parentId);
@@ -2330,224 +2753,224 @@ const ProjectManager = () => {
           </div>
         </div>
       )}
+
       {/* Edit Item Modal */}
-{showEditItemModal && editingItem && selectedProject && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-    <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-      <h2 className="text-xl font-bold mb-4">Edit Item</h2>
-      <div className="space-y-4">
-        <div>
-          <label className="block text-sm font-semibold mb-2">Type</label>
-          <div className="flex gap-2">
-            {['epic', 'story', 'task', 'subtask'].map(type => (
+      {showEditItemModal && editingItem && selectedProject && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-bold mb-4">Edit Item</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold mb-2">Type</label>
+                <div className="flex gap-2">
+                  {['epic', 'story', 'task', 'subtask'].map(type => (
+                    <button
+                      key={type}
+                      onClick={() => {
+                        setEditingItem({...editingItem, type});
+                        setDateValidationError('');
+                      }}
+                      className={`flex-1 px-3 py-2 rounded border text-sm ${
+                        editingItem.type === type 
+                          ? 'bg-blue-600 text-white border-blue-600' 
+                          : 'bg-white text-gray-700 border-gray-300'
+                      }`}
+                    >
+                      {getItemIcon(type)} {type.charAt(0).toUpperCase() + type.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold mb-1">Parent Item (Optional)</label>
+                <select
+                  value={editingItem.parentId || ''}
+                  onChange={(e) => {
+                    const parentId = e.target.value ? parseInt(e.target.value) : null;
+                    setEditingItem({...editingItem, parentId});
+                    if (editingItem.startDate && editingItem.endDate) {
+                      const error = validateDates(editingItem.startDate, editingItem.endDate, parentId);
+                      setDateValidationError(error || '');
+                    }
+                  }}
+                  className="w-full border border-gray-300 rounded px-3 py-2"
+                >
+                  <option value="">None (Top Level)</option>
+                  {selectedProject.items
+                    .filter(item => {
+                      if (item.id === editingItem.id) return false;
+                      
+                      if (editingItem.type === 'epic') return false;
+                      if (editingItem.type === 'story') return item.type === 'epic';
+                      if (editingItem.type === 'task') return item.type === 'story';
+                      if (editingItem.type === 'subtask') return item.type === 'task';
+                      return false;
+                    })
+                    .map(item => {
+                      let displayName = item.name;
+                      if (item.type === 'story' || item.type === 'task') {
+                        const parentItem = selectedProject.items.find(i => i.id === item.parentId);
+                        if (parentItem) {
+                          displayName = `${item.name} (under ${parentItem.name})`;
+                        }
+                      }
+                      return (
+                        <option key={item.id} value={item.id}>
+                          {getItemIcon(item.type)} {displayName}
+                        </option>
+                      );
+                    })
+                  }
+                </select>
+                {editingItem.parentId && selectedProject.items.find(i => i.id === editingItem.parentId) && (
+                  <p className="text-xs text-blue-600 mt-1">
+                    📅 Parent dates: {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).startDate).toLocaleDateString()} - {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).endDate).toLocaleDateString()}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-semibold mb-1">Item Name</label>
+                <input
+                  type="text"
+                  value={editingItem.name}
+                  onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
+                  className="w-full border border-gray-300 rounded px-3 py-2"
+                  placeholder="Enter item name"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Status</label>
+                  <select
+                    value={editingItem.status}
+                    onChange={(e) => setEditingItem({ ...editingItem, status: e.target.value })}
+                    className="w-full border border-gray-300 rounded px-3 py-2"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="in-progress">In Progress</option>
+                    <option value="review">Review</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Priority</label>
+                  <select
+                    value={editingItem.priority}
+                    onChange={(e) => setEditingItem({ ...editingItem, priority: e.target.value })}
+                    className="w-full border border-gray-300 rounded px-3 py-2"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold mb-1">Assignee</label>
+                <input
+                  type="text"
+                  value={editingItem.assignee}
+                  onChange={(e) => setEditingItem({ ...editingItem, assignee: e.target.value })}
+                  className="w-full border border-gray-300 rounded px-3 py-2"
+                  placeholder="Enter assignee name"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={editingItem.startDate}
+                    onChange={(e) => {
+                      setEditingItem({ ...editingItem, startDate: e.target.value });
+                      if (editingItem.endDate) {
+                        const error = validateDates(e.target.value, editingItem.endDate, editingItem.parentId);
+                        setDateValidationError(error || '');
+                      }
+                    }}
+                    className="w-full border border-gray-300 rounded px-3 py-2"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={editingItem.endDate}
+                    onChange={(e) => {
+                      setEditingItem({ ...editingItem, endDate: e.target.value });
+                      if (editingItem.startDate) {
+                        const error = validateDates(editingItem.startDate, e.target.value, editingItem.parentId);
+                        setDateValidationError(error || '');
+                      }
+                    }}
+                    className="w-full border border-gray-300 rounded px-3 py-2"
+                  />
+                </div>
+              </div>
+              {dateValidationError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  ⚠️ {dateValidationError}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Estimated Hours</label>
+                  <input
+                    type="number"
+                    value={editingItem.estimatedHours}
+                    onChange={(e) => setEditingItem({ ...editingItem, estimatedHours: parseInt(e.target.value) || 0 })}
+                    className="w-full border border-gray-300 rounded px-3 py-2"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold mb-1">Actual Hours</label>
+                  <input
+                    type="number"
+                    value={editingItem.actualHours}
+                    onChange={(e) => setEditingItem({ ...editingItem, actualHours: parseInt(e.target.value) || 0 })}
+                    className="w-full border border-gray-300 rounded px-3 py-2"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+              {editingItem.jira && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-purple-900">🔗 Synced with Jira</span>
+                    <a 
+                      href={editingItem.jira.issueUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-xs text-purple-700 hover:underline"
+                    >
+                      {editingItem.jira.issueKey}
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 mt-6">
               <button
-                key={type}
+                onClick={updateItem}
+                className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+              >
+                Save Changes
+              </button>
+              <button
                 onClick={() => {
-                  setEditingItem({...editingItem, type});
+                  setShowEditItemModal(false);
+                  setEditingItem(null);
                   setDateValidationError('');
                 }}
-                className={`flex-1 px-3 py-2 rounded border text-sm ${
-                  editingItem.type === type 
-                    ? 'bg-blue-600 text-white border-blue-600' 
-                    : 'bg-white text-gray-700 border-gray-300'
-                }`}
+                className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
               >
-                {getItemIcon(type)} {type.charAt(0).toUpperCase() + type.slice(1)}
+                Cancel
               </button>
-            ))}
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-semibold mb-1">Parent Item (Optional)</label>
-          <select
-            value={editingItem.parentId || ''}
-            onChange={(e) => {
-              const parentId = e.target.value ? parseInt(e.target.value) : null;
-              setEditingItem({...editingItem, parentId});
-              if (editingItem.startDate && editingItem.endDate) {
-                const error = validateDates(editingItem.startDate, editingItem.endDate, parentId);
-                setDateValidationError(error || '');
-              }
-            }}
-            className="w-full border border-gray-300 rounded px-3 py-2"
-          >
-            <option value="">None (Top Level)</option>
-            {selectedProject.items
-              .filter(item => {
-                // Don't allow selecting itself or its descendants as parent
-                if (item.id === editingItem.id) return false;
-                
-                // Filter based on type hierarchy
-                if (editingItem.type === 'epic') return false;
-                if (editingItem.type === 'story') return item.type === 'epic';
-                if (editingItem.type === 'task') return item.type === 'story';
-                if (editingItem.type === 'subtask') return item.type === 'task';
-                return false;
-              })
-              .map(item => {
-                let displayName = item.name;
-                if (item.type === 'story' || item.type === 'task') {
-                  const parentItem = selectedProject.items.find(i => i.id === item.parentId);
-                  if (parentItem) {
-                    displayName = `${item.name} (under ${parentItem.name})`;
-                  }
-                }
-                return (
-                  <option key={item.id} value={item.id}>
-                    {getItemIcon(item.type)} {displayName}
-                  </option>
-                );
-              })
-            }
-          </select>
-          {editingItem.parentId && selectedProject.items.find(i => i.id === editingItem.parentId) && (
-            <p className="text-xs text-blue-600 mt-1">
-              📅 Parent dates: {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).startDate).toLocaleDateString()} - {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).endDate).toLocaleDateString()}
-            </p>
-          )}
-        </div>
-        <div>
-          <label className="block text-sm font-semibold mb-1">Item Name</label>
-          <input
-            type="text"
-            value={editingItem.name}
-            onChange={(e) => setEditingItem({ ...editingItem, name: e.target.value })}
-            className="w-full border border-gray-300 rounded px-3 py-2"
-            placeholder="Enter item name"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-semibold mb-1">Status</label>
-            <select
-              value={editingItem.status}
-              onChange={(e) => setEditingItem({ ...editingItem, status: e.target.value })}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            >
-              <option value="pending">Pending</option>
-              <option value="in-progress">In Progress</option>
-              <option value="review">Review</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold mb-1">Priority</label>
-            <select
-              value={editingItem.priority}
-              onChange={(e) => setEditingItem({ ...editingItem, priority: e.target.value })}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-semibold mb-1">Assignee</label>
-          <input
-            type="text"
-            value={editingItem.assignee}
-            onChange={(e) => setEditingItem({ ...editingItem, assignee: e.target.value })}
-            className="w-full border border-gray-300 rounded px-3 py-2"
-            placeholder="Enter assignee name"
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-semibold mb-1">Start Date</label>
-            <input
-              type="date"
-              value={editingItem.startDate}
-              onChange={(e) => {
-                setEditingItem({ ...editingItem, startDate: e.target.value });
-                if (editingItem.endDate) {
-                  const error = validateDates(e.target.value, editingItem.endDate, editingItem.parentId);
-                  setDateValidationError(error || '');
-                }
-              }}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold mb-1">End Date</label>
-            <input
-              type="date"
-              value={editingItem.endDate}
-              onChange={(e) => {
-                setEditingItem({ ...editingItem, endDate: e.target.value });
-                if (editingItem.startDate) {
-                  const error = validateDates(editingItem.startDate, e.target.value, editingItem.parentId);
-                  setDateValidationError(error || '');
-                }
-              }}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-            />
-          </div>
-        </div>
-        {dateValidationError && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-            ⚠️ {dateValidationError}
-          </div>
-        )}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-semibold mb-1">Estimated Hours</label>
-            <input
-              type="number"
-              value={editingItem.estimatedHours}
-              onChange={(e) => setEditingItem({ ...editingItem, estimatedHours: parseInt(e.target.value) || 0 })}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              placeholder="0"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold mb-1">Actual Hours</label>
-            <input
-              type="number"
-              value={editingItem.actualHours}
-              onChange={(e) => setEditingItem({ ...editingItem, actualHours: parseInt(e.target.value) || 0 })}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              placeholder="0"
-            />
-          </div>
-        </div>
-        {editingItem.jira && (
-          <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-purple-900">🔗 Synced with Jira</span>
-              <a 
-                href={editingItem.jira.issueUrl} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-xs text-purple-700 hover:underline"
-              >
-                {editingItem.jira.issueKey}
-              </a>
             </div>
           </div>
-        )}
-      </div>
-      <div className="flex gap-2 mt-6">
-        <button
-          onClick={updateItem}
-          className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-        >
-          Save Changes
-        </button>
-        <button
-          onClick={() => {
-            setShowEditItemModal(false);
-            setEditingItem(null);
-            setDateValidationError('');
-          }}
-          className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+        </div>
+      )}
+
       {/* Item Details Modal */}
       {showItemDetailsModal && selectedItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -2899,7 +3322,7 @@ const ProjectManager = () => {
         </div>
       )}
 
-      {/* Import Modal */}
+      {/* Jira Import Modal */}
       {showImportModal && importPreview && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
