@@ -1386,8 +1386,106 @@ const getOverdueItems = () => {
             date.getFullYear() === today.getFullYear();
     };
 
-    // Calendar rendering JSX here (full calendar component)
-  };
+   return (
+        <div className="bg-white rounded-lg border border-gray-200 p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-bold">Calendar View</h3>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  const newMonth = new Date(selectedMonth);
+                  newMonth.setMonth(newMonth.getMonth() - 1);
+                  setSelectedMonth(newMonth);
+                }}
+                className="p-2 hover:bg-gray-100 rounded"
+              >
+                <ChevronRight size={16} className="rotate-180" />
+              </button>
+              <span className="font-semibold px-4">
+                {selectedMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </span>
+              <button
+                onClick={() => {
+                  const newMonth = new Date(selectedMonth);
+                  newMonth.setMonth(newMonth.getMonth() + 1);
+                  setSelectedMonth(newMonth);
+                }}
+                className="p-2 hover:bg-gray-100 rounded"
+              >
+                <ChevronRight size={16} />
+              </button>
+              <button
+                onClick={() => setSelectedMonth(new Date())}
+                className="ml-4 px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
+              >
+                Today
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-7 gap-1">
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+              <div key={day} className="text-center text-xs font-semibold text-gray-600 py-2">
+                {day}
+              </div>
+            ))}
+            
+            {days.map((date, index) => {
+              const items = getItemsForDate(date);
+              const hasOverdue = items.some(item => isOverdue(item));
+              const isCurrentMonth = date.getMonth() === month;
+              
+              return (
+                <div
+                  key={index}
+                  className={`border ${
+                    isToday(date) 
+                      ? 'bg-blue-50 border-blue-400' 
+                      : isCurrentMonth 
+                        ? 'bg-white border-gray-200' 
+                        : 'bg-gray-50 border-gray-100'
+                  } p-2 min-h-[80px] relative`}
+                >
+                  <div className={`text-xs font-semibold mb-1 ${
+                    isToday(date) ? 'text-blue-700' : isCurrentMonth ? 'text-gray-700' : 'text-gray-400'
+                  }`}>
+                    {date.getDate()}
+                    {hasOverdue && <span className="ml-1 text-red-500">⚠️</span>}
+                  </div>
+                  {items.length > 0 && (
+                    <div className="space-y-1">
+                      {items.slice(0, 3).map((item, idx) => (
+                        <div
+                          key={idx}
+                          className={`text-xs px-1 py-0.5 rounded truncate ${
+                            isOverdue(item)
+                              ? 'bg-red-100 text-red-700'
+                              : item.status === 'review'
+                                ? 'bg-green-100 text-green-700'
+                                : item.status === 'in-progress'
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : 'bg-gray-100 text-gray-700'
+                          }`}
+                          title={item.name}
+                        >
+                          {getItemIcon(item.type)} {item.name}
+                        </div>
+                      ))}
+                      {items.length > 3 && (
+                        <div className="text-xs text-gray-500 text-center">
+                          +{items.length - 3} more
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
     const renderGanttChart = (items, parentId = null, indent = 0) => {
       const children = items.filter(item => item.parentId === parentId);
       
@@ -1840,7 +1938,7 @@ const getOverdueItems = () => {
       </div>
     );
   };
-  
+
   const renderCharts = () => {
     if (!selectedProject) return <div className="p-4 text-gray-500">Select a project to view analytics</div>;
     
