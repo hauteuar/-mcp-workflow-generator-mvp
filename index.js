@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Calendar, BarChart3, Trash2, Upload, Settings, Link2, ExternalLink, MessageSquare, RefreshCw, CheckCheck, ChevronRight, ChevronDown, Download, TrendingUp, PieChart, Wifi, WifiOff, Search } from 'lucide-react';
+import { Plus, Calendar, BarChart3, Trash2, Upload, Settings, Link2, ExternalLink, MessageSquare, RefreshCw, CheckCheck, ChevronRight, ChevronDown, Download, TrendingUp, PieChart, Wifi, WifiOff, Edit2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const ProjectManager = () => {
@@ -31,17 +31,6 @@ const ProjectManager = () => {
   const [importPreview, setImportPreview] = useState(null);
   const [excelImportPreview, setExcelImportPreview] = useState(null);
   
-  // Search and Filters
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchFilters, setSearchFilters] = useState({
-    assignee: '',
-    status: 'all',
-    priority: 'all',
-    type: 'all',
-    dateRange: 'all'
-  });
-  const [showSearchFilters, setShowSearchFilters] = useState(false);
-  
   // Filters
   const [timelineFilters, setTimelineFilters] = useState({
     showEpics: true,
@@ -51,6 +40,8 @@ const ProjectManager = () => {
   });
   
   const [selectedChartType, setSelectedChartType] = useState('gantt');
+  const [calendarView, setCalendarView] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
   
   // Jira Configuration
   const [jiraConfig, setJiraConfig] = useState({
@@ -86,10 +77,11 @@ const ProjectManager = () => {
 
   const [dateValidationError, setDateValidationError] = useState('');
   const [projectDateError, setProjectDateError] = useState('');
+  const [editDateValidationError, setEditDateValidationError] = useState('');
 
   const [newComment, setNewComment] = useState('');
   const [postToJira, setPostToJira] = useState(false);
- 
+
   // Initialize data on mount
   useEffect(() => {
     loadInitialData();
@@ -289,13 +281,17 @@ const ProjectManager = () => {
       if (response.ok) {
         const backendData = await response.json();
         
+        // Merge backend data with local data intelligently
+        // Only update if backend has newer data
         const mergedProjects = [...projects];
         
         backendData.forEach(backendProject => {
           const localIndex = mergedProjects.findIndex(p => p.id === backendProject.id);
           if (localIndex === -1) {
+            // New project from backend, add it
             mergedProjects.push(backendProject);
           } else {
+            // Project exists, update it with backend data
             mergedProjects[localIndex] = backendProject;
           }
         });
@@ -312,6 +308,7 @@ const ProjectManager = () => {
     if (!useBackend) return;
     
     try {
+      // Always use PUT with the project ID to update or create
       const response = await fetch(`${backendUrl}/projects/${project.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -353,39 +350,40 @@ const ProjectManager = () => {
     };
     return colors[level] || colors[4];
   };
-  
+
   const isOverdue = (item) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const endDate = new Date(item.endDate);
-  endDate.setHours(0, 0, 0, 0);
-  return endDate < today && item.status !== 'review';
-};
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endDate = new Date(item.endDate);
+    endDate.setHours(0, 0, 0, 0);
+    return endDate < today && item.status !== 'review';
+  };
 
-const getDaysOverdue = (item) => {
-  if (!isOverdue(item)) return 0;
-  const today = new Date();
-  const endDate = new Date(item.endDate);
-  const diffTime = today - endDate;
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-};
+  const getDaysOverdue = (item) => {
+    if (!isOverdue(item)) return 0;
+    const today = new Date();
+    const endDate = new Date(item.endDate);
+    const diffTime = today - endDate;
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  };
 
-const getOverdueItems = () => {
-  const allOverdue = [];
-  projects.forEach(project => {
-    project.items.forEach(item => {
-      if (isOverdue(item)) {
-        allOverdue.push({
-          ...item,
-          projectName: project.name,
-          projectId: project.id,
-          daysOverdue: getDaysOverdue(item)
-        });
-      }
+  const getOverdueItems = () => {
+    const allOverdue = [];
+    projects.forEach(project => {
+      project.items.forEach(item => {
+        if (isOverdue(item)) {
+          allOverdue.push({
+            ...item,
+            projectName: project.name,
+            projectId: project.id,
+            daysOverdue: getDaysOverdue(item)
+          });
+        }
+      });
     });
-  });
-  return allOverdue.sort((a, b) => b.daysOverdue - a.daysOverdue);
-};
+    return allOverdue.sort((a, b) => b.daysOverdue - a.daysOverdue);
+  };
+
   const toggleExpand = (itemId) => {
     const newExpanded = new Set(expandedItems);
     if (newExpanded.has(itemId)) {
@@ -423,112 +421,6 @@ const getOverdueItems = () => {
     };
   };
 
-  // Search and Filter Functions
-  const filterItems = (items) => {
-    if (!items) return [];
-    
-    return items.filter(item => {
-      // Text search across name, assignee, and type
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const matchesName = item.name.toLowerCase().includes(query);
-        const matchesAssignee = item.assignee?.toLowerCase().includes(query);
-        const matchesType = item.type.toLowerCase().includes(query);
-        const matchesJira = item.jira?.issueKey.toLowerCase().includes(query);
-        
-        if (!matchesName && !matchesAssignee && !matchesType && !matchesJira) {
-          return false;
-        }
-      }
-      
-      // Filter by assignee
-      if (searchFilters.assignee && item.assignee !== searchFilters.assignee) {
-        return false;
-      }
-      
-      // Filter by status
-      if (searchFilters.status !== 'all' && item.status !== searchFilters.status) {
-        return false;
-      }
-      
-      // Filter by priority
-      if (searchFilters.priority !== 'all' && item.priority !== searchFilters.priority) {
-        return false;
-      }
-      
-      // Filter by type
-      if (searchFilters.type !== 'all' && item.type !== searchFilters.type) {
-        return false;
-      }
-      
-      // Filter by date range
-      if (searchFilters.dateRange !== 'all') {
-        const today = new Date();
-        const itemEnd = new Date(item.endDate);
-        const daysDiff = Math.ceil((itemEnd - today) / (1000 * 60 * 60 * 24));
-        
-        if (searchFilters.dateRange === 'overdue' && daysDiff >= 0) return false;
-        if (searchFilters.dateRange === 'today' && daysDiff !== 0) return false;
-        if (searchFilters.dateRange === 'week' && (daysDiff < 0 || daysDiff > 7)) return false;
-        if (searchFilters.dateRange === 'month' && (daysDiff < 0 || daysDiff > 30)) return false;
-      }
-      
-      return true;
-    });
-  };
-
-  const clearSearch = () => {
-    setSearchQuery('');
-    setSearchFilters({
-      assignee: '',
-      status: 'all',
-      priority: 'all',
-      type: 'all',
-      dateRange: 'all'
-    });
-  };
-
-  const getUniqueAssignees = () => {
-    if (!selectedProject?.items) return [];
-    const assignees = new Set();
-    selectedProject.items.forEach(item => {
-      if (item.assignee) assignees.add(item.assignee);
-    });
-    return Array.from(assignees).sort();
-  };
-
-  // Validate dates
-  const validateDates = (startDate, endDate, parentId = null) => {
-    if (!startDate || !endDate) {
-      return 'Start date and end date are required';
-    }
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    if (end < start) {
-      return 'End date cannot be before start date';
-    }
-
-    if (parentId && selectedProject) {
-      const parent = selectedProject.items.find(i => i.id === parentId);
-      if (parent) {
-        const parentStart = new Date(parent.startDate);
-        const parentEnd = new Date(parent.endDate);
-
-        if (start < parentStart) {
-          return `Start date cannot be before parent's start date (${new Date(parent.startDate).toLocaleDateString()})`;
-        }
-
-        if (end > parentEnd) {
-          return `End date cannot be after parent's end date (${new Date(parent.endDate).toLocaleDateString()})`;
-        }
-      }
-    }
-
-    return null;
-  };
-
   // CRUD Operations
   const addProject = async () => {
     if (!newProject.name || !newProject.startDate || !newProject.endDate) {
@@ -536,6 +428,7 @@ const getOverdueItems = () => {
       return;
     }
 
+    // Validate dates
     const start = new Date(newProject.startDate);
     const end = new Date(newProject.endDate);
     
@@ -573,6 +466,7 @@ const getOverdueItems = () => {
     const updatedProjects = projects.filter(p => p.id !== projectId);
     setProjects(updatedProjects);
     
+    // Clear selected project if it's the one being deleted
     if (selectedProject && selectedProject.id === projectId) {
       setSelectedProject(null);
       setActiveView('dashboard');
@@ -585,12 +479,47 @@ const getOverdueItems = () => {
     alert('Project deleted successfully');
   };
 
+  // Validate dates
+  const validateDates = (startDate, endDate, parentId = null) => {
+    if (!startDate || !endDate) {
+      return 'Start date and end date are required';
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    // Check if end date is before start date
+    if (end < start) {
+      return 'End date cannot be before start date';
+    }
+
+    // Check parent constraints if parent exists
+    if (parentId && selectedProject) {
+      const parent = selectedProject.items.find(i => i.id === parentId);
+      if (parent) {
+        const parentStart = new Date(parent.startDate);
+        const parentEnd = new Date(parent.endDate);
+
+        if (start < parentStart) {
+          return `Start date cannot be before parent's start date (${new Date(parent.startDate).toLocaleDateString()})`;
+        }
+
+        if (end > parentEnd) {
+          return `End date cannot be after parent's end date (${new Date(parent.endDate).toLocaleDateString()})`;
+        }
+      }
+    }
+
+    return null;
+  };
+
   const addItem = async () => {
     if (!selectedProject || !newItem.name || !newItem.startDate || !newItem.endDate) {
       alert('Please fill in all required fields');
       return;
     }
 
+    // Validate dates
     const dateError = validateDates(newItem.startDate, newItem.endDate, newItem.parentId);
     if (dateError) {
       setDateValidationError(dateError);
@@ -641,6 +570,7 @@ const getOverdueItems = () => {
     
     setProjects(updatedProjects);
     
+    // Update selectedProject immediately
     const updated = updatedProjects.find(p => p.id === selectedProject.id);
     if (updated) setSelectedProject(updated);
     
@@ -654,25 +584,25 @@ const getOverdueItems = () => {
   };
 
   const updateItem = async () => {
-    if (!selectedProject || !editingItem || !editingItem.name || !editingItem.startDate || !editingItem.endDate) {
-      alert('Please fill in all required fields');
-      return;
-    }
+    if (!selectedProject || !editingItem) return;
 
+    // Validate dates
     const dateError = validateDates(editingItem.startDate, editingItem.endDate, editingItem.parentId);
     if (dateError) {
-      setDateValidationError(dateError);
+      setEditDateValidationError(dateError);
       return;
     }
 
-    setDateValidationError('');
+    setEditDateValidationError('');
 
     const updatedProjects = projects.map(p => {
       if (p.id === selectedProject.id) {
         return {
           ...p,
           items: p.items.map(item => 
-            item.id === editingItem.id ? editingItem : item
+            item.id === editingItem.id 
+              ? { ...item, ...editingItem }
+              : item
           )
         };
       }
@@ -681,6 +611,7 @@ const getOverdueItems = () => {
     
     setProjects(updatedProjects);
     
+    // Update selectedProject immediately
     const updated = updatedProjects.find(p => p.id === selectedProject.id);
     if (updated) setSelectedProject(updated);
     
@@ -688,9 +619,9 @@ const getOverdueItems = () => {
       await saveProjectToBackend(updated);
     }
     
-    setEditingItem(null);
-    setDateValidationError('');
     setShowEditItemModal(false);
+    setEditingItem(null);
+    setEditDateValidationError('');
   };
 
   const updateItemStatus = async (projectId, itemId, newStatus) => {
@@ -708,6 +639,7 @@ const getOverdueItems = () => {
     
     setProjects(updatedProjects);
     
+    // Update selectedProject immediately
     if (selectedProject && selectedProject.id === projectId) {
       const updated = updatedProjects.find(p => p.id === projectId);
       if (updated) setSelectedProject(updated);
@@ -750,6 +682,7 @@ const getOverdueItems = () => {
     
     setProjects(updatedProjects);
     
+    // Update selectedProject immediately
     if (selectedProject && selectedProject.id === projectId) {
       const updated = updatedProjects.find(p => p.id === projectId);
       if (updated) setSelectedProject(updated);
@@ -759,6 +692,12 @@ const getOverdueItems = () => {
       const updated = updatedProjects.find(p => p.id === projectId);
       await saveProjectToBackend(updated);
     }
+  };
+
+  const openEditModal = (item) => {
+    setEditingItem({ ...item });
+    setEditDateValidationError('');
+    setShowEditItemModal(true);
   };
 
   const addComment = async () => {
@@ -788,6 +727,7 @@ const getOverdueItems = () => {
 
     setProjects(updatedProjects);
     
+    // Update selectedProject and selectedItem immediately
     const updatedProject = updatedProjects.find(p => p.id === selectedProject.id);
     if (updatedProject) {
       setSelectedProject(updatedProject);
@@ -859,7 +799,9 @@ const getOverdueItems = () => {
           return {
             ...p,
             items: p.items.map(i => 
-              i.id === item.id ? { ...i, jira: jiraIssue } : i
+              i.id === item.id 
+                ? { ...i, jira: jiraIssue }
+                : i
             )
           };
         }
@@ -867,40 +809,30 @@ const getOverdueItems = () => {
       });
       
       setProjects(updatedProjects);
-      const updated = updatedProjects.find(p => p.id === selectedProject.id);
-      if (updated) setSelectedProject(updated);
       
-      if (useBackend) {
-        await saveProjectToBackend(updated);
+      const updated = updatedProjects.find(p => p.id === selectedProject.id);
+      if (updated) {
+        setSelectedProject(updated);
+        if (useBackend) {
+          await saveProjectToBackend(updated);
+        }
       }
     }
   };
 
-  const connectToJira = () => {
-    if (jiraConfig.url && jiraConfig.email && jiraConfig.apiToken && jiraConfig.defaultProject) {
-      setJiraConfig({ ...jiraConfig, connected: true });
-      alert('Successfully connected to Jira!');
-      setShowJiraSettingsModal(false);
-    } else {
-      alert('Please fill in all fields');
-    }
-  };
-
-  const disconnectJira = () => {
-    setJiraConfig({
-      url: '', email: '', apiToken: '', defaultProject: '', autoSync: false, connected: false
-    });
-    alert('Disconnected from Jira');
-  };
-
   const importFromJira = async () => {
-    if (!jiraConfig.connected || !useBackend || !backendConnected) {
-      alert('Please ensure both backend and Jira are connected');
+    if (!jiraConfig.connected) {
+      alert('Please connect to Jira first');
       return;
     }
-
+    
+    if (!useBackend || !backendConnected) {
+      alert('Please connect to backend server first');
+      return;
+    }
+    
     try {
-      const response = await fetch(`${backendUrl}/jira/import`, {
+      const response = await fetch(`${backendUrl}/jira/import-issues`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jiraConfig })
@@ -913,8 +845,13 @@ const getOverdueItems = () => {
       }
 
       const data = await response.json();
-      setImportPreview(data.items);
-      setShowImportModal(true);
+      
+      if (data.items && data.items.length > 0) {
+        setImportPreview(data.items);
+        setShowImportModal(true);
+      } else {
+        alert('No issues found in Jira project');
+      }
     } catch (error) {
       console.error('Error importing from Jira:', error);
       alert(`Error importing from Jira: ${error.message}`);
@@ -946,7 +883,25 @@ const getOverdueItems = () => {
     alert(`Successfully imported ${importPreview.length} items from Jira!`);
   };
 
+  const connectToJira = () => {
+    if (jiraConfig.url && jiraConfig.email && jiraConfig.apiToken && jiraConfig.defaultProject) {
+      setJiraConfig({ ...jiraConfig, connected: true });
+      alert('Successfully connected to Jira!');
+      setShowJiraSettingsModal(false);
+    } else {
+      alert('Please fill in all fields');
+    }
+  };
+
+  const disconnectJira = () => {
+    setJiraConfig({
+      url: '', email: '', apiToken: '', defaultProject: '', autoSync: false, connected: false
+    });
+    alert('Disconnected from Jira');
+  };
+
   const downloadExcelTemplate = () => {
+    // Create a template Excel file
     const template = [
       {
         'Name': 'User Authentication System',
@@ -987,9 +942,17 @@ const getOverdueItems = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
     
+    // Set column widths
     ws['!cols'] = [
-      { wch: 30 }, { wch: 12 }, { wch: 15 }, { wch: 10 }, { wch: 15 },
-      { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 30 }
+      { wch: 30 }, // Name
+      { wch: 12 }, // Type
+      { wch: 15 }, // Status
+      { wch: 10 }, // Priority
+      { wch: 15 }, // Assignee
+      { wch: 12 }, // Start Date
+      { wch: 12 }, // End Date
+      { wch: 15 }, // Estimated Hours
+      { wch: 30 }  // Parent
     ];
 
     XLSX.writeFile(wb, 'project-manager-template.xlsx');
@@ -1014,7 +977,9 @@ const getOverdueItems = () => {
         return;
       }
 
+      // Map Excel columns to our format
       const mappedItems = jsonData.map((row, index) => {
+        // Try to find columns (case-insensitive)
         const getField = (possibleNames) => {
           for (const name of possibleNames) {
             const value = row[name] || row[name.toLowerCase()] || row[name.toUpperCase()];
@@ -1035,29 +1000,35 @@ const getOverdueItems = () => {
         const estimatedHours = getField(['Estimated Hours', 'Estimate', 'Hours', 'Time Estimate']);
         const parentName = getField(['Parent', 'Parent Item', 'Parent Task']);
 
+        // Validate and normalize type
         const normalizedType = type ? 
           (type.toLowerCase().includes('epic') ? 'epic' :
            type.toLowerCase().includes('story') ? 'story' :
            type.toLowerCase().includes('subtask') || type.toLowerCase().includes('sub-task') ? 'subtask' :
            'task') : 'task';
 
+        // Validate and normalize status
         const normalizedStatus = status ?
           (status.toLowerCase().includes('review') || status.toLowerCase().includes('done') ? 'review' :
            status.toLowerCase().includes('progress') || status.toLowerCase().includes('active') ? 'in-progress' :
            'pending') : 'pending';
 
+        // Validate and normalize priority
         const normalizedPriority = priority ?
           (priority.toLowerCase().includes('high') || priority.toLowerCase().includes('critical') ? 'high' :
            priority.toLowerCase().includes('medium') || priority.toLowerCase().includes('normal') ? 'medium' :
            'low') : 'medium';
 
+        // Parse dates
         const parseDate = (dateValue) => {
           if (!dateValue) return new Date().toISOString().split('T')[0];
           
           try {
+            // If it's already a Date object from Excel
             if (dateValue instanceof Date) {
               return dateValue.toISOString().split('T')[0];
             }
+            // If it's a string
             const parsed = new Date(dateValue);
             if (!isNaN(parsed.getTime())) {
               return parsed.toISOString().split('T')[0];
@@ -1098,6 +1069,7 @@ const getOverdueItems = () => {
         return;
       }
 
+      // Try to match parent-child relationships by name
       mappedItems.forEach(item => {
         if (item.parentName) {
           const parent = mappedItems.find(p => 
@@ -1116,6 +1088,7 @@ const getOverdueItems = () => {
       setExcelImportPreview(mappedItems);
       setShowExcelImportModal(true);
       
+      // Clear the file input
       event.target.value = '';
     } catch (error) {
       console.error('Excel import error:', error);
@@ -1126,6 +1099,7 @@ const getOverdueItems = () => {
   const confirmExcelImport = async () => {
     if (!selectedProject || !excelImportPreview) return;
 
+    // Clean up the items (remove temporary fields)
     const cleanedItems = excelImportPreview.map(item => {
       const { _excelRow, parentName, ...cleanItem } = item;
       return cleanItem;
@@ -1165,7 +1139,7 @@ const getOverdueItems = () => {
   };
 
   const exportChart = () => {
-    alert('Chart export feature coming soon!');
+    alert('Chart export feature would be implemented here');
   };
 
   const getItemStats = () => {
@@ -1208,7 +1182,8 @@ const getOverdueItems = () => {
       
       return (
         <div key={item.id} className="border-l-2 border-gray-200">
-          <div className={`flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer ${
+          <div 
+            className={`flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer ${
               isOverdue(item) ? 'bg-red-50 border-red-300' : getLevelColor(item.level)
             } border rounded mb-1`}
             style={{ marginLeft: `${indent * 20}px` }}
@@ -1224,13 +1199,13 @@ const getOverdueItems = () => {
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <span className={`font-semibold ${isOverdue(item) ? 'text-red-700' : ''}`}>
-              {item.name}
-              {isOverdue(item) && (
-                <span className="ml-2 text-xs font-normal text-red-600">
-                  ({getDaysOverdue(item)} days overdue)
+                  {item.name}
+                  {isOverdue(item) && (
+                    <span className="ml-2 text-xs font-normal text-red-600">
+                      ({getDaysOverdue(item)} days overdue)
+                    </span>
+                  )}
                 </span>
-              )}
-            </span>
                 {item.jira ? (
                   <a 
                     href={item.jira.issueUrl} 
@@ -1251,6 +1226,7 @@ const getOverdueItems = () => {
               </div>
               <div className="text-xs text-gray-600">
                 {item.assignee} • {hours.actual}h / {hours.estimated}h • {Math.round(progress)}% complete
+                {isOverdue(item) && ' • ⚠️ OVERDUE'}
               </div>
             </div>
             
@@ -1288,13 +1264,12 @@ const getOverdueItems = () => {
               <button 
                 onClick={(e) => { 
                   e.stopPropagation();
-                  setEditingItem({...item}); 
-                  setShowEditItemModal(true); 
+                  openEditModal(item);
                 }} 
                 className="text-blue-600 hover:text-blue-800 p-1"
                 title="Edit item"
               >
-                <Settings size={16} />
+                <Edit2 size={16} />
               </button>
               <button 
                 onClick={(e) => { 
@@ -1302,8 +1277,8 @@ const getOverdueItems = () => {
                   setSelectedItem(item); 
                   setShowItemDetailsModal(true); 
                 }} 
-                className="text-green-600 hover:text-green-800 p-1"
-                title="View details & comments"
+                className="text-gray-600 hover:text-gray-800 p-1"
+                title="View details"
               >
                 <MessageSquare size={16} />
               </button>
@@ -1329,7 +1304,7 @@ const getOverdueItems = () => {
   };
 
   const renderTimeline = () => {
-    if (!selectedProject) return <div className="p-4 text-gray-500">Select a project to view charts</div>;
+    if (!selectedProject) return <div className="p-4 text-gray-500">Select a project to view timeline</div>;
     if (!selectedProject.items || selectedProject.items.length === 0) {
       return (
         <div className="p-8 text-center text-gray-500">
@@ -1345,48 +1320,48 @@ const getOverdueItems = () => {
       const current = new Date(date).getTime();
       return ((current - start) / (end - start)) * 100;
     };
-    
+
     const getTodayPosition = () => {
-  const today = new Date();
-  return getDatePosition(today, selectedProject.startDate, selectedProject.endDate);
-};
-
-  const renderCalendarView = () => {
-    const year = selectedMonth.getFullYear();
-    const month = selectedMonth.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const startDate = new Date(year, month, 1 - firstDay.getDay());
-    const endDate = new Date(year, month + 1, 6 - lastDay.getDay());
-    
-    const days = [];
-    const current = new Date(startDate);
-    
-    while (current <= endDate) {
-      days.push(new Date(current));
-      current.setDate(current.getDate() + 1);
-    }
-
-    const getItemsForDate = (date) => {
-      const dateStr = date.toISOString().split('T')[0];
-      return selectedProject.items.filter(item => {
-        const itemStart = new Date(item.startDate);
-        const itemEnd = new Date(item.endDate);
-        itemStart.setHours(0, 0, 0, 0);
-        itemEnd.setHours(0, 0, 0, 0);
-        date.setHours(0, 0, 0, 0);
-        return date >= itemStart && date <= itemEnd;
-      });
-    };
-
-    const isToday = (date) => {
       const today = new Date();
-      return date.getDate() === today.getDate() &&
-            date.getMonth() === today.getMonth() &&
-            date.getFullYear() === today.getFullYear();
+      return getDatePosition(today, selectedProject.startDate, selectedProject.endDate);
     };
 
-   return (
+    const renderCalendarView = () => {
+      const year = selectedMonth.getFullYear();
+      const month = selectedMonth.getMonth();
+      const firstDay = new Date(year, month, 1);
+      const lastDay = new Date(year, month + 1, 0);
+      const startDate = new Date(year, month, 1 - firstDay.getDay());
+      const endDate = new Date(year, month + 1, 6 - lastDay.getDay());
+      
+      const days = [];
+      const current = new Date(startDate);
+      
+      while (current <= endDate) {
+        days.push(new Date(current));
+        current.setDate(current.getDate() + 1);
+      }
+
+      const getItemsForDate = (date) => {
+        const dateStr = date.toISOString().split('T')[0];
+        return selectedProject.items.filter(item => {
+          const itemStart = new Date(item.startDate);
+          const itemEnd = new Date(item.endDate);
+          itemStart.setHours(0, 0, 0, 0);
+          itemEnd.setHours(0, 0, 0, 0);
+          date.setHours(0, 0, 0, 0);
+          return date >= itemStart && date <= itemEnd;
+        });
+      };
+
+      const isToday = (date) => {
+        const today = new Date();
+        return date.getDate() === today.getDate() &&
+               date.getMonth() === today.getMonth() &&
+               date.getFullYear() === today.getFullYear();
+      };
+
+      return (
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-bold">Calendar View</h3>
@@ -1490,6 +1465,7 @@ const getOverdueItems = () => {
       const children = items.filter(item => item.parentId === parentId);
       
       return children.map(item => {
+        // Check if this item type should be displayed based on filters
         const shouldDisplay = 
           (item.type === 'epic' && timelineFilters.showEpics) ||
           (item.type === 'story' && timelineFilters.showStories) ||
@@ -1531,7 +1507,6 @@ const getOverdueItems = () => {
                 </div>
                 <span className="text-sm text-gray-600">{item.assignee}</span>
               </div>
-
               <div className="relative h-8 bg-gray-100 rounded">
                 {/* Current day marker */}
                 {getTodayPosition() >= 0 && getTodayPosition() <= 100 && (
@@ -1551,6 +1526,7 @@ const getOverdueItems = () => {
                     'bg-gray-400'
                   }`}
                   style={{ left: `${startPos}%`, width: `${width}%` }}
+                >
                 >
                   {width > 15 && (
                     <>
@@ -1806,7 +1782,7 @@ const getOverdueItems = () => {
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center flex-wrap gap-3">
-          <h2 className="text-2xl font-bold">{selectedProject.name} - Charts & Analytics</h2>
+          <h2 className="text-2xl font-bold">{selectedProject.name} - Timeline & Charts</h2>
           <div className="flex gap-2 flex-wrap">
             <select
               value={selectedChartType}
