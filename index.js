@@ -89,7 +89,7 @@ const ProjectManager = () => {
 
   const [newComment, setNewComment] = useState('');
   const [postToJira, setPostToJira] = useState(false);
-
+ 
   // Initialize data on mount
   useEffect(() => {
     loadInitialData();
@@ -353,7 +353,39 @@ const ProjectManager = () => {
     };
     return colors[level] || colors[4];
   };
+  
+  const isOverdue = (item) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const endDate = new Date(item.endDate);
+  endDate.setHours(0, 0, 0, 0);
+  return endDate < today && item.status !== 'review';
+};
 
+const getDaysOverdue = (item) => {
+  if (!isOverdue(item)) return 0;
+  const today = new Date();
+  const endDate = new Date(item.endDate);
+  const diffTime = today - endDate;
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+};
+
+const getOverdueItems = () => {
+  const allOverdue = [];
+  projects.forEach(project => {
+    project.items.forEach(item => {
+      if (isOverdue(item)) {
+        allOverdue.push({
+          ...item,
+          projectName: project.name,
+          projectId: project.id,
+          daysOverdue: getDaysOverdue(item)
+        });
+      }
+    });
+  });
+  return allOverdue.sort((a, b) => b.daysOverdue - a.daysOverdue);
+};
   const toggleExpand = (itemId) => {
     const newExpanded = new Set(expandedItems);
     if (newExpanded.has(itemId)) {
@@ -1176,8 +1208,9 @@ const ProjectManager = () => {
       
       return (
         <div key={item.id} className="border-l-2 border-gray-200">
-          <div 
-            className={`flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer ${getLevelColor(item.level)} border rounded mb-1`}
+          <div className={`flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer ${
+              isOverdue(item) ? 'bg-red-50 border-red-300' : getLevelColor(item.level)
+            } border rounded mb-1`}
             style={{ marginLeft: `${indent * 20}px` }}
           >
             {hasChildren ? (
@@ -1190,7 +1223,14 @@ const ProjectManager = () => {
             
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <span className="font-semibold">{item.name}</span>
+                <span className={`font-semibold ${isOverdue(item) ? 'text-red-700' : ''}`}>
+              {item.name}
+              {isOverdue(item) && (
+                <span className="ml-2 text-xs font-normal text-red-600">
+                  ({getDaysOverdue(item)} days overdue)
+                </span>
+              )}
+            </span>
                 {item.jira ? (
                   <a 
                     href={item.jira.issueUrl} 
@@ -1305,7 +1345,49 @@ const ProjectManager = () => {
       const current = new Date(date).getTime();
       return ((current - start) / (end - start)) * 100;
     };
+    
+    const getTodayPosition = () => {
+  const today = new Date();
+  return getDatePosition(today, selectedProject.startDate, selectedProject.endDate);
+};
 
+  const renderCalendarView = () => {
+    const year = selectedMonth.getFullYear();
+    const month = selectedMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startDate = new Date(year, month, 1 - firstDay.getDay());
+    const endDate = new Date(year, month + 1, 6 - lastDay.getDay());
+    
+    const days = [];
+    const current = new Date(startDate);
+    
+    while (current <= endDate) {
+      days.push(new Date(current));
+      current.setDate(current.getDate() + 1);
+    }
+
+    const getItemsForDate = (date) => {
+      const dateStr = date.toISOString().split('T')[0];
+      return selectedProject.items.filter(item => {
+        const itemStart = new Date(item.startDate);
+        const itemEnd = new Date(item.endDate);
+        itemStart.setHours(0, 0, 0, 0);
+        itemEnd.setHours(0, 0, 0, 0);
+        date.setHours(0, 0, 0, 0);
+        return date >= itemStart && date <= itemEnd;
+      });
+    };
+
+    const isToday = (date) => {
+      const today = new Date();
+      return date.getDate() === today.getDate() &&
+            date.getMonth() === today.getMonth() &&
+            date.getFullYear() === today.getFullYear();
+    };
+
+    // Calendar rendering JSX here (full calendar component)
+  };
     const renderGanttChart = (items, parentId = null, indent = 0) => {
       const children = items.filter(item => item.parentId === parentId);
       
@@ -1351,9 +1433,21 @@ const ProjectManager = () => {
                 </div>
                 <span className="text-sm text-gray-600">{item.assignee}</span>
               </div>
+
               <div className="relative h-8 bg-gray-100 rounded">
+                {/* Current day marker */}
+                {getTodayPosition() >= 0 && getTodayPosition() <= 100 && (
+                  <div
+                    className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10"
+                    style={{ left: `${getTodayPosition()}%` }}
+                    title={`Today: ${new Date().toLocaleDateString()}`}
+                  >
+                    <div className="absolute -top-1 left-1/2 transform -translate-x-1/2 w-2 h-2 bg-red-500 rounded-full"></div>
+                  </div>
+                )}
                 <div
                   className={`absolute h-full rounded flex items-center justify-center text-white text-xs font-semibold px-2 ${
+                    isOverdue(item) ? 'bg-red-500' :
                     item.status === 'review' ? 'bg-green-500' :
                     item.status === 'in-progress' ? 'bg-blue-500' :
                     'bg-gray-400'
@@ -1638,65 +1732,105 @@ const ProjectManager = () => {
 
         <div id="chart-container">
           {selectedChartType === 'gantt' && (
-            <div className="bg-white rounded-lg border border-gray-200 p-4">
-              <div className="mb-4 flex gap-4 items-center flex-wrap">
-                <span className="font-semibold text-sm">Show Levels:</span>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={timelineFilters.showEpics}
-                    onChange={(e) => setTimelineFilters({...timelineFilters, showEpics: e.target.checked})}
-                    className="w-4 h-4"
-                  />
-                  <span className="text-sm">📦 Epics</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={timelineFilters.showStories}
-                    onChange={(e) => setTimelineFilters({...timelineFilters, showStories: e.target.checked})}
-                    className="w-4 h-4"
-                  />
-                  <span className="text-sm">📖 Stories</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={timelineFilters.showTasks}
-                    onChange={(e) => setTimelineFilters({...timelineFilters, showTasks: e.target.checked})}
-                    className="w-4 h-4"
-                  />
-                  <span className="text-sm">✓ Tasks</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={timelineFilters.showSubtasks}
-                    onChange={(e) => setTimelineFilters({...timelineFilters, showSubtasks: e.target.checked})}
-                    className="w-4 h-4"
-                  />
-                  <span className="text-sm">○ Subtasks</span>
-                </label>
-              </div>
-
-              <div className="overflow-x-auto">
-                <div className="min-w-[800px]">
-                  <div className="space-y-2">
-                    {renderGanttChart(selectedProject.items, null, 0)}
+            <>
+              <div className="bg-white rounded-lg border border-gray-200 p-4 mb-4">
+                <div className="flex justify-between items-center mb-4">
+                  <div className="flex gap-4 items-center flex-wrap">
+                    <span className="font-semibold text-sm">View:</span>
+                    <button
+                      onClick={() => setCalendarView(false)}
+                      className={`px-3 py-1 rounded text-sm ${!calendarView ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                    >
+                      Gantt Chart
+                    </button>
+                    <button
+                      onClick={() => setCalendarView(true)}
+                      className={`px-3 py-1 rounded text-sm ${calendarView ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                    >
+                      Calendar
+                    </button>
                   </div>
-                  {renderGanttChart(selectedProject.items, null, 0).filter(Boolean).length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                      <p>No items match the selected filters. Try enabling more item types.</p>
+                  {!calendarView && (
+                    <div className="flex gap-2 items-center">
+                      <span className="text-xs text-red-500 font-semibold flex items-center gap-1">
+                        <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                        Today: {new Date().toLocaleDateString()}
+                      </span>
                     </div>
                   )}
                 </div>
+
+                {!calendarView && (
+                  <div className="mb-4 flex gap-4 items-center flex-wrap">
+                    <span className="font-semibold text-sm">Show Levels:</span>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={timelineFilters.showEpics}
+                        onChange={(e) => setTimelineFilters({...timelineFilters, showEpics: e.target.checked})}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm">📦 Epics</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={timelineFilters.showStories}
+                        onChange={(e) => setTimelineFilters({...timelineFilters, showStories: e.target.checked})}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm">📖 Stories</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={timelineFilters.showTasks}
+                        onChange={(e) => setTimelineFilters({...timelineFilters, showTasks: e.target.checked})}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm">✓ Tasks</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={timelineFilters.showSubtasks}
+                        onChange={(e) => setTimelineFilters({...timelineFilters, showSubtasks: e.target.checked})}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm">○ Subtasks</span>
+                    </label>
+                  </div>
+                )}
               </div>
 
-              <div className="mt-6 pt-6 border-t border-gray-200 flex justify-between text-sm text-gray-600">
-                <span>{new Date(selectedProject.startDate).toLocaleDateString()}</span>
-                <span>{new Date(selectedProject.endDate).toLocaleDateString()}</span>
-              </div>
-            </div>
+              {calendarView ? (
+                renderCalendarView()
+              ) : (
+                <div className="bg-white rounded-lg border border-gray-200 p-4">
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[800px]">
+                      <div className="space-y-2">
+                        {renderGanttChart(selectedProject.items, null, 0)}
+                      </div>
+                      {renderGanttChart(selectedProject.items, null, 0).filter(Boolean).length === 0 && (
+                        <div className="text-center py-8 text-gray-500">
+                          <p>No items match the selected filters. Try enabling more item types.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="mt-6 pt-6 border-t border-gray-200 flex justify-between text-sm text-gray-600">
+                    <span>{new Date(selectedProject.startDate).toLocaleDateString()}</span>
+                    <span className="text-red-500 font-semibold flex items-center gap-1">
+                      <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                      Today
+                    </span>
+                    <span>{new Date(selectedProject.endDate).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {selectedChartType === 'burndown' && renderBurndownChart()}
@@ -1706,7 +1840,7 @@ const ProjectManager = () => {
       </div>
     );
   };
-
+  
   const renderCharts = () => {
     if (!selectedProject) return <div className="p-4 text-gray-500">Select a project to view analytics</div>;
     
@@ -1836,7 +1970,7 @@ const ProjectManager = () => {
         else totalPending++;
       });
     });
-
+    const overdueItems = getOverdueItems();
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1852,12 +1986,76 @@ const ProjectManager = () => {
             <div className="text-yellow-600 text-sm font-semibold mb-2">IN PROGRESS</div>
             <div className="text-3xl font-bold text-yellow-700">{totalInProgress}</div>
           </div>
-          <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
-            <div className="text-gray-600 text-sm font-semibold mb-2">PENDING</div>
-            <div className="text-3xl font-bold text-gray-700">{totalPending}</div>
-          </div>
+          <div className="bg-red-50 p-6 rounded-lg border border-red-200">
+            <div className="text-red-600 text-sm font-semibold mb-2">OVERDUE</div>
+            <div className="text-3xl font-bold text-red-700">{overdueItems.length}</div>
+            <div className="text-xs text-red-600 mt-1">
+              {overdueItems.length > 0 && `Needs immediate attention`}
+            </div>
+         </div>
         </div>
-
+        
+        {/* Overdue Items Section */}
+        {overdueItems.length > 0 && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+            <h2 className="text-xl font-bold text-red-900 mb-4 flex items-center gap-2">
+              ⚠️ Overdue Items ({overdueItems.length})
+            </h2>
+            <div className="space-y-3 max-h-96 overflow-y-auto">
+              {overdueItems.slice(0, 10).map(item => (
+                <div 
+                  key={item.id} 
+                  className="bg-white border border-red-200 rounded-lg p-4 hover:border-red-400 transition cursor-pointer"
+                  onClick={() => {
+                    const project = projects.find(p => p.id === item.projectId);
+                    if (project) {
+                      setSelectedProject(project);
+                      setActiveView('hierarchy');
+                    }
+                  }}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-lg">{getItemIcon(item.type)}</span>
+                        <span className="font-bold text-gray-900">{item.name}</span>
+                        <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded">
+                          {item.daysOverdue} days overdue
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        <span className="font-semibold">Project:</span> {item.projectName} • 
+                        <span className="font-semibold ml-2">Assignee:</span> {item.assignee || 'Unassigned'} • 
+                        <span className="font-semibold ml-2">Due:</span> {new Date(item.endDate).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <div className={`px-3 py-1 rounded text-xs font-semibold ${
+                      item.status === 'in-progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'
+                    }`}>
+                      {item.status}
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
+                    <span className={`font-semibold ${
+                      item.priority === 'high' ? 'text-red-600' :
+                      item.priority === 'medium' ? 'text-yellow-600' :
+                      'text-gray-600'
+                    }`}>
+                      Priority: {item.priority}
+                    </span>
+                    <span>Estimated: {item.estimatedHours}h</span>
+                    <span>Actual: {item.actualHours}h</span>
+                  </div>
+                </div>
+              ))}
+              {overdueItems.length > 10 && (
+                <div className="text-center text-red-600 text-sm font-semibold pt-2">
+                  ... and {overdueItems.length - 10} more overdue items
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {jiraConfig.connected && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -1877,6 +2075,7 @@ const ProjectManager = () => {
               const progress = project.items.length > 0 
                 ? (project.items.filter(t => t.status === 'review').length / project.items.length) * 100 
                 : 0;
+              const projectOverdue = project.items.filter(item => isOverdue(item)).length;
               return (
                 <div 
                   key={project.id} 
@@ -1887,7 +2086,15 @@ const ProjectManager = () => {
                       className="flex-1 cursor-pointer"
                       onClick={() => { setSelectedProject(project); setActiveView('hierarchy'); }}
                     >
-                      <h3 className="font-bold text-lg">{project.name}</h3>
+
+                       <h3 className="font-bold text-lg flex items-center gap-2">
+                        {project.name}
+                        {projectOverdue > 0 && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-normal">
+                            {projectOverdue} overdue
+                          </span>
+                        )}
+                      </h3>
                       <p className="text-gray-600 text-sm">{project.description}</p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -3475,7 +3682,7 @@ const ProjectManager = () => {
                       placeholder="http://localhost:3001/api"
                     />
                     <p className="text-xs text-gray-600 mt-1">
-                      For team access, use: http://YOUR-IP-ADDRESS:3001/api
+                      For team access, use: http://YOUR-IP-ADDRESS:3001/apif
                     </p>
                   </div>
 
