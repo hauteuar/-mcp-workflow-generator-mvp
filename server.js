@@ -1,241 +1,238 @@
-// server.js - lowdb Backend Server with Jira Proxy (ES Modules)
-import express from 'express';
-import cors from 'cors';
-import { JSONFilePreset } from 'lowdb/node';
-import fetch from 'node-fetch';
+const express = require('express');
+const cors = require('cors');
+const low = require('lowdb');
+const FileSync = require('lowdb/adapters/FileSync');
+const axios = require('axios');
+const Holidays = require('date-holidays');
 
 const app = express();
-const PORT = 3001;
+const adapter = new FileSync('db.json');
+const db = low(adapter);
+
+// Initialize holidays
+const hd = new Holidays('US'); // Can be configured for other countries
+
+// Initialize database
+db.defaults({ projects: [] }).write();
 
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-
-let db;
-
-// Initialize lowdb
-async function initializeDatabase() {
-  try {
-    db = await JSONFilePreset('db.json', { projects: [] });
-    console.log('✅ Connected to lowdb database (db.json)');
-  } catch (err) {
-    console.error('❌ Error opening database:', err);
-    process.exit(1);
-  }
-}
+app.use(express.json());
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    message: 'Server running', 
-    database: 'lowdb'
-  });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Get all projects
-app.get('/api/projects', async (req, res) => {
+// Get holidays endpoint
+app.get('/api/holidays/:year', (req, res) => {
+  const year = parseInt(req.params.year);
+  const holidays = hd.getHolidays(year);
+  
+  // Format holidays for frontend
+  const formattedHolidays = holidays.map(holiday => ({
+    date: holiday.date.split(' ')[0], // Get just the date part
+    name: holiday.name,
+    type: holiday.type
+  }));
+  
+  res.json(formattedHolidays);
+});
+
+// Projects endpoints
+app.get('/api/projects', (req, res) => {
+  const projects = db.get('projects').value();
+  res.json(projects);
+});
+
+app.put('/api/projects/:id', (req, res) => {
+  const projectId = parseInt(req.params.id);
+  const project = req.body;
+  
+  const existingProject = db.get('projects')
+    .find({ id: projectId })
+    .value();
+  
+  if (existingProject) {
+    db.get('projects')
+      .find({ id: projectId })
+      .assign(project)
+      .write();
+  } else {
+    db.get('projects')
+      .push(project)
+      .write();
+  }
+  
+  res.json(project);
+});
+
+app.delete('/api/projects/:id', (req, res) => {
+  const projectId = parseInt(req.params.id);
+  db.get('projects')
+    .remove({ id: projectId })
+    .write();
+  res.json({ deleted: true });
+});
+
+// Jira Integration Endpoints
+
+// Test connection and get projects
+app.post('/api/jira/test-connection', async (req, res) => {
+  const { url, email, apiToken } = req.body;
+  
   try {
-    await db.read();
-    res.json(db.data.projects);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const response = await axios.get(
+      `${url}/rest/api/2/project`,
+      {
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    // Return project keys and names
+    const projects = response.data.map(project => ({
+      key: project.key,
+      name: project.name,
+      id: project.id
+    }));
+    
+    res.json({ 
+      connected: true, 
+      projects: projects 
+    });
+  } catch (error) {
+    console.error('Jira connection error:', error.response?.data || error.message);
+    res.status(400).json({ 
+      connected: false, 
+      error: error.response?.data?.message || error.message 
+    });
   }
 });
 
-// Create or Update project
-app.put('/api/projects/:id', async (req, res) => {
-  try {
-    const projectId = parseInt(req.params.id);
-    await db.read();
-    
-    const index = db.data.projects.findIndex(p => p.id === projectId);
-    
-    if (index === -1) {
-      db.data.projects.push(req.body);
-      console.log(`✅ Created project: ${req.body.name} (ID: ${projectId})`);
-    } else {
-      db.data.projects[index] = req.body;
-      console.log(`✅ Updated project: ${req.body.name} (ID: ${projectId})`);
-    }
-    
-    await db.write();
-    res.json(req.body);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Delete project
-app.delete('/api/projects/:id', async (req, res) => {
-  try {
-    const projectId = parseInt(req.params.id);
-    await db.read();
-    
-    const originalLength = db.data.projects.length;
-    db.data.projects = db.data.projects.filter(p => p.id !== projectId);
-    
-    if (db.data.projects.length < originalLength) {
-      await db.write();
-      console.log(`🗑️  Deleted project ID: ${projectId}`);
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: 'Project not found' });
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ============================================
-// JIRA PROXY ENDPOINTS (NEW)
-// ============================================
-
-// Create Jira Issue
+// Create Jira issue
 app.post('/api/jira/create-issue', async (req, res) => {
+  const { jiraConfig, item } = req.body;
+  
   try {
-    const { jiraConfig, item } = req.body;
-    
-    if (!jiraConfig || !jiraConfig.url || !jiraConfig.email || !jiraConfig.apiToken) {
-      return res.status(400).json({ error: 'Invalid Jira configuration' });
-    }
-
-    const auth = Buffer.from(`${jiraConfig.email}:${jiraConfig.apiToken}`).toString('base64');
-    
-    const requestBody = {
+    const issueData = {
       fields: {
-        project: { key: jiraConfig.defaultProject },
+        project: {
+          key: jiraConfig.defaultProject
+        },
         summary: item.name,
-        issuetype: { name: item.type },
-        priority: { name: item.priority },
+        description: `Created from Project Manager Pro\n\nPriority: ${item.priority}\nDue Date: ${item.duedate}`,
+        issuetype: {
+          name: item.type
+        },
+        priority: {
+          name: item.priority
+        },
         duedate: item.duedate
       }
     };
 
-    const response = await fetch(`${jiraConfig.url}/rest/api/3/issue`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(requestBody)
+    const response = await axios.post(
+      `${jiraConfig.url}/rest/api/2/issue`,
+      issueData,
+      {
+        headers: {
+          'Authorization': `Bearer ${jiraConfig.apiToken}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    res.json({
+      key: response.data.key,
+      id: response.data.id,
+      self: response.data.self
     });
-
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Jira API Error:', errorData);
-      return res.status(response.status).json({ 
-        error: errorData.errorMessages?.join(', ') || 'Failed to create Jira issue' 
-      });
-    }
-
-    const data = await response.json();
-    console.log(`✅ Created Jira issue: ${data.key}`);
-    res.json(data);
-  } catch (err) {
-    console.error('Error creating Jira issue:', err);
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error('Error creating Jira issue:', error.response?.data || error.message);
+    res.status(400).json({ 
+      error: error.response?.data?.errors || error.message 
+    });
   }
 });
 
-// Import Issues from Jira
+// Import issues from Jira
 app.post('/api/jira/import-issues', async (req, res) => {
+  const { jiraConfig } = req.body;
+  
   try {
-    const { jiraConfig } = req.body;
+    const jql = `project = ${jiraConfig.defaultProject} ORDER BY created DESC`;
     
-    if (!jiraConfig || !jiraConfig.url || !jiraConfig.email || !jiraConfig.apiToken) {
-      return res.status(400).json({ error: 'Invalid Jira configuration' });
-    }
-
-    const auth = Buffer.from(`${jiraConfig.email}:${jiraConfig.apiToken}`).toString('base64');
-    
-    const jql = `project=${jiraConfig.defaultProject} ORDER BY created DESC`;
-    const searchUrl = `${jiraConfig.url}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=100`;
-
-    const response = await fetch(searchUrl, {
-      method: 'GET',
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Accept': 'application/json'
+    const response = await axios.get(
+      `${jiraConfig.url}/rest/api/2/search`,
+      {
+        params: {
+          jql: jql,
+          maxResults: 100,
+          fields: 'summary,status,priority,assignee,duedate,issuetype,parent,created,updated'
+        },
+        headers: {
+          'Authorization': `Bearer ${jiraConfig.apiToken}`,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
       }
-    });
+    );
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error('Jira API Error:', errorData);
-      return res.status(response.status).json({ 
-        error: errorData.errorMessages?.join(', ') || 'Failed to fetch from Jira' 
-      });
-    }
+    const items = response.data.issues.map(issue => {
+      const typeMap = {
+        'Epic': 'epic',
+        'Story': 'story',
+        'Task': 'task',
+        'Sub-task': 'subtask',
+        'Bug': 'task'
+      };
 
-    const data = await response.json();
-    
-    // Map Jira issues to our format
-    const mapJiraStatus = (status) => {
-      const s = status.toLowerCase();
-      if (s.includes('done') || s.includes('closed') || s.includes('review')) return 'review';
-      if (s.includes('progress') || s.includes('development')) return 'in-progress';
-      return 'pending';
-    };
+      const statusMap = {
+        'To Do': 'pending',
+        'In Progress': 'in-progress',
+        'Done': 'review',
+        'Closed': 'review'
+      };
 
-    const mappedIssues = data.issues.map(issue => {
-      const type = issue.fields.issuetype.name.toLowerCase();
-      const itemType = type.includes('epic') ? 'epic' : 
-                      type.includes('story') ? 'story' : 
-                      type.includes('sub-task') || type.includes('subtask') ? 'subtask' : 'task';
-      
       return {
+        id: Date.now() + Math.random(),
         name: issue.fields.summary,
-        type: itemType,
-        level: itemType === 'epic' ? 1 : itemType === 'story' ? 2 : itemType === 'task' ? 3 : 4,
-        status: mapJiraStatus(issue.fields.status.name),
-        priority: (issue.fields.priority?.name || 'medium').toLowerCase(),
+        type: typeMap[issue.fields.issuetype.name] || 'task',
+        status: statusMap[issue.fields.status.name] || 'pending',
+        priority: issue.fields.priority?.name?.toLowerCase() || 'medium',
         assignee: issue.fields.assignee?.displayName || '',
-        startDate: issue.fields.created ? new Date(issue.fields.created).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        endDate: issue.fields.duedate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        estimatedHours: issue.fields.timeoriginalestimate ? Math.round(issue.fields.timeoriginalestimate / 3600) : 0,
-        actualHours: issue.fields.timespent ? Math.round(issue.fields.timespent / 3600) : 0,
+        startDate: issue.fields.created?.split('T')[0] || new Date().toISOString().split('T')[0],
+        endDate: issue.fields.duedate || new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0],
+        estimatedHours: 0,
+        actualHours: 0,
+        level: 1,
+        parentId: null,
+        children: [],
+        comments: [],
         jira: {
           issueKey: issue.key,
           issueId: issue.id,
           issueUrl: `${jiraConfig.url}/browse/${issue.key}`,
           issueType: issue.fields.issuetype.name,
-          lastSynced: new Date().toISOString(),
-          syncStatus: 'synced'
+          lastSynced: new Date().toISOString()
         }
       };
     });
 
-    console.log(`✅ Imported ${mappedIssues.length} issues from Jira project ${jiraConfig.defaultProject}`);
-    res.json({ issues: mappedIssues });
-  } catch (err) {
-    console.error('Error importing from Jira:', err);
-    res.status(500).json({ error: err.message });
+    res.json({ items });
+  } catch (error) {
+    console.error('Error importing from Jira:', error.response?.data || error.message);
+    res.status(400).json({ 
+      error: error.response?.data?.message || error.message 
+    });
   }
 });
 
-// Start server
-initializeDatabase().then(() => {
-  app.listen(PORT, () => {
-    console.log(`
-╔════════════════════════════════════════════════╗
-║  🚀 Project Manager Server Started!           ║
-║                                                ║
-║  📊 Backend: http://localhost:${PORT}          ║
-║  💾 Database: lowdb (db.json)                 ║
-║  🔗 Jira Proxy: Enabled                       ║
-║                                                ║
-║  ✅ Ready for team collaboration!             ║
-║  ✅ No CORS issues with Jira!                 ║
-╚════════════════════════════════════════════════╝
-    `);
-  });
-});
-
-process.on('SIGINT', async () => {
-  console.log('\n👋 Shutting down gracefully...');
-  if (db) {
-    await db.write();
-  }
-  process.exit(0);
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });

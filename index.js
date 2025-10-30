@@ -31,6 +31,11 @@ const ProjectManager = () => {
   const [importPreview, setImportPreview] = useState(null);
   const [excelImportPreview, setExcelImportPreview] = useState(null);
   
+  // Calendar and Timeline
+  const [calendarView, setCalendarView] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(new Date());
+  const [holidays, setHolidays] = useState([]);
+  
   // Filters
   const [timelineFilters, setTimelineFilters] = useState({
     showEpics: true,
@@ -40,8 +45,6 @@ const ProjectManager = () => {
   });
   
   const [selectedChartType, setSelectedChartType] = useState('gantt');
-  const [calendarView, setCalendarView] = useState(false);
-  const [selectedMonth, setSelectedMonth] = useState(new Date());
   
   // Jira Configuration
   const [jiraConfig, setJiraConfig] = useState({
@@ -52,6 +55,18 @@ const ProjectManager = () => {
     autoSync: false,
     connected: false
   });
+
+  const [jiraProjects, setJiraProjects] = useState([]);
+  const [selectedJiraUrl, setSelectedJiraUrl] = useState('');
+  const [customJiraUrl, setCustomJiraUrl] = useState('');
+  const [testingConnection, setTestingConnection] = useState(false);
+
+  // Predefined Jira URLs
+  const predefinedJiraUrls = [
+    { value: 'https://jira3.horizon.bankofamerica.com', label: 'BofA Jira 3 (Horizon)' },
+    { value: 'https://jira2.horizon.bankofamerica.com', label: 'BofA Jira 2 (Horizon)' },
+    { value: 'custom', label: 'Custom URL' }
+  ];
 
   // Form States
   const [newProject, setNewProject] = useState({
@@ -95,6 +110,13 @@ const ProjectManager = () => {
     }
   }, []);
 
+  // Load holidays
+  useEffect(() => {
+    if (useBackend && backendConnected) {
+      loadHolidays();
+    }
+  }, [useBackend, backendConnected]);
+
   // Save to localStorage
   useEffect(() => {
     if (!useBackend) {
@@ -115,6 +137,38 @@ const ProjectManager = () => {
       return () => clearInterval(interval);
     }
   }, [useBackend, backendConnected]);
+
+  // Load holidays from backend
+  const loadHolidays = async () => {
+    if (!useBackend || !backendConnected) {
+      // Use default holidays if no backend
+      setHolidays([
+        { date: '2025-01-01', name: "New Year's Day" },
+        { date: '2025-01-20', name: 'MLK Day' },
+        { date: '2025-02-17', name: "Presidents' Day" },
+        { date: '2025-05-26', name: 'Memorial Day' },
+        { date: '2025-06-19', name: 'Juneteenth' },
+        { date: '2025-07-04', name: 'Independence Day' },
+        { date: '2025-09-01', name: 'Labor Day' },
+        { date: '2025-10-13', name: 'Columbus Day' },
+        { date: '2025-11-11', name: 'Veterans Day' },
+        { date: '2025-11-27', name: 'Thanksgiving' },
+        { date: '2025-12-25', name: 'Christmas' }
+      ]);
+      return;
+    }
+    
+    try {
+      const currentYear = new Date().getFullYear();
+      const response = await fetch(`${backendUrl}/holidays/${currentYear}`);
+      if (response.ok) {
+        const data = await response.json();
+        setHolidays(data);
+      }
+    } catch (error) {
+      console.error('Error loading holidays:', error);
+    }
+  };
 
   // Load initial data
   const loadInitialData = () => {
@@ -260,6 +314,7 @@ const ProjectManager = () => {
       localStorage.setItem('backendUrl', backendUrl);
       localStorage.setItem('useBackend', 'true');
       await syncFromBackend();
+      await loadHolidays();
       setShowBackendSettings(false);
       alert('✅ Connected to backend server!');
     } else {
@@ -281,17 +336,13 @@ const ProjectManager = () => {
       if (response.ok) {
         const backendData = await response.json();
         
-        // Merge backend data with local data intelligently
-        // Only update if backend has newer data
         const mergedProjects = [...projects];
         
         backendData.forEach(backendProject => {
           const localIndex = mergedProjects.findIndex(p => p.id === backendProject.id);
           if (localIndex === -1) {
-            // New project from backend, add it
             mergedProjects.push(backendProject);
           } else {
-            // Project exists, update it with backend data
             mergedProjects[localIndex] = backendProject;
           }
         });
@@ -308,7 +359,6 @@ const ProjectManager = () => {
     if (!useBackend) return;
     
     try {
-      // Always use PUT with the project ID to update or create
       const response = await fetch(`${backendUrl}/projects/${project.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -384,6 +434,26 @@ const ProjectManager = () => {
     return allOverdue.sort((a, b) => b.daysOverdue - a.daysOverdue);
   };
 
+  const isHoliday = (date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    return holidays.some(holiday => holiday.date === dateStr);
+  };
+
+  const isWeekend = (date) => {
+    const day = date.getDay();
+    return day === 0 || day === 6;
+  };
+
+  const isWorkDay = (date) => {
+    return !isWeekend(date) && !isHoliday(date);
+  };
+
+  const getHolidayName = (date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const holiday = holidays.find(h => h.date === dateStr);
+    return holiday ? holiday.name : null;
+  };
+
   const toggleExpand = (itemId) => {
     const newExpanded = new Set(expandedItems);
     if (newExpanded.has(itemId)) {
@@ -428,7 +498,6 @@ const ProjectManager = () => {
       return;
     }
 
-    // Validate dates
     const start = new Date(newProject.startDate);
     const end = new Date(newProject.endDate);
     
@@ -466,7 +535,6 @@ const ProjectManager = () => {
     const updatedProjects = projects.filter(p => p.id !== projectId);
     setProjects(updatedProjects);
     
-    // Clear selected project if it's the one being deleted
     if (selectedProject && selectedProject.id === projectId) {
       setSelectedProject(null);
       setActiveView('dashboard');
@@ -488,12 +556,10 @@ const ProjectManager = () => {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    // Check if end date is before start date
     if (end < start) {
       return 'End date cannot be before start date';
     }
 
-    // Check parent constraints if parent exists
     if (parentId && selectedProject) {
       const parent = selectedProject.items.find(i => i.id === parentId);
       if (parent) {
@@ -519,7 +585,6 @@ const ProjectManager = () => {
       return;
     }
 
-    // Validate dates
     const dateError = validateDates(newItem.startDate, newItem.endDate, newItem.parentId);
     if (dateError) {
       setDateValidationError(dateError);
@@ -570,7 +635,6 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
-    // Update selectedProject immediately
     const updated = updatedProjects.find(p => p.id === selectedProject.id);
     if (updated) setSelectedProject(updated);
     
@@ -586,7 +650,6 @@ const ProjectManager = () => {
   const updateItem = async () => {
     if (!selectedProject || !editingItem) return;
 
-    // Validate dates
     const dateError = validateDates(editingItem.startDate, editingItem.endDate, editingItem.parentId);
     if (dateError) {
       setEditDateValidationError(dateError);
@@ -611,7 +674,6 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
-    // Update selectedProject immediately
     const updated = updatedProjects.find(p => p.id === selectedProject.id);
     if (updated) setSelectedProject(updated);
     
@@ -639,7 +701,6 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
-    // Update selectedProject immediately
     if (selectedProject && selectedProject.id === projectId) {
       const updated = updatedProjects.find(p => p.id === projectId);
       if (updated) setSelectedProject(updated);
@@ -682,7 +743,6 @@ const ProjectManager = () => {
     
     setProjects(updatedProjects);
     
-    // Update selectedProject immediately
     if (selectedProject && selectedProject.id === projectId) {
       const updated = updatedProjects.find(p => p.id === projectId);
       if (updated) setSelectedProject(updated);
@@ -727,7 +787,6 @@ const ProjectManager = () => {
 
     setProjects(updatedProjects);
     
-    // Update selectedProject and selectedItem immediately
     const updatedProject = updatedProjects.find(p => p.id === selectedProject.id);
     if (updatedProject) {
       setSelectedProject(updatedProject);
@@ -740,6 +799,52 @@ const ProjectManager = () => {
   };
 
   // Jira Functions
+  const testJiraConnection = async () => {
+    if (!jiraConfig.apiToken || !jiraConfig.email) {
+      alert('Please enter email and API token first');
+      return;
+    }
+
+    const url = selectedJiraUrl === 'custom' ? customJiraUrl : selectedJiraUrl;
+    if (!url) {
+      alert('Please select or enter a Jira URL');
+      return;
+    }
+
+    setTestingConnection(true);
+
+    try {
+      const response = await fetch(`${backendUrl}/jira/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: url,
+          email: jiraConfig.email,
+          apiToken: jiraConfig.apiToken
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.connected) {
+        setJiraProjects(data.projects);
+        setJiraConfig({
+          ...jiraConfig,
+          url: url,
+          connected: false
+        });
+        alert('✅ Connection successful! Please select a project.');
+      } else {
+        alert(`❌ Connection failed: ${data.error}`);
+      }
+    } catch (error) {
+      console.error('Connection test error:', error);
+      alert('Error testing connection');
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
   const createJiraIssue = async (item) => {
     if (!jiraConfig.connected) return null;
     
@@ -884,12 +989,18 @@ const ProjectManager = () => {
   };
 
   const connectToJira = () => {
-    if (jiraConfig.url && jiraConfig.email && jiraConfig.apiToken && jiraConfig.defaultProject) {
-      setJiraConfig({ ...jiraConfig, connected: true });
+    const url = selectedJiraUrl === 'custom' ? customJiraUrl : selectedJiraUrl;
+    
+    if (url && jiraConfig.email && jiraConfig.apiToken && jiraConfig.defaultProject) {
+      setJiraConfig({ 
+        ...jiraConfig, 
+        url: url,
+        connected: true 
+      });
       alert('Successfully connected to Jira!');
       setShowJiraSettingsModal(false);
     } else {
-      alert('Please fill in all fields');
+      alert('Please fill in all fields and select a project');
     }
   };
 
@@ -897,11 +1008,13 @@ const ProjectManager = () => {
     setJiraConfig({
       url: '', email: '', apiToken: '', defaultProject: '', autoSync: false, connected: false
     });
+    setJiraProjects([]);
+    setSelectedJiraUrl('');
+    setCustomJiraUrl('');
     alert('Disconnected from Jira');
   };
 
   const downloadExcelTemplate = () => {
-    // Create a template Excel file
     const template = [
       {
         'Name': 'User Authentication System',
@@ -942,17 +1055,9 @@ const ProjectManager = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Tasks');
     
-    // Set column widths
     ws['!cols'] = [
-      { wch: 30 }, // Name
-      { wch: 12 }, // Type
-      { wch: 15 }, // Status
-      { wch: 10 }, // Priority
-      { wch: 15 }, // Assignee
-      { wch: 12 }, // Start Date
-      { wch: 12 }, // End Date
-      { wch: 15 }, // Estimated Hours
-      { wch: 30 }  // Parent
+      { wch: 30 }, { wch: 12 }, { wch: 15 }, { wch: 10 },
+      { wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 30 }
     ];
 
     XLSX.writeFile(wb, 'project-manager-template.xlsx');
@@ -977,9 +1082,7 @@ const ProjectManager = () => {
         return;
       }
 
-      // Map Excel columns to our format
       const mappedItems = jsonData.map((row, index) => {
-        // Try to find columns (case-insensitive)
         const getField = (possibleNames) => {
           for (const name of possibleNames) {
             const value = row[name] || row[name.toLowerCase()] || row[name.toUpperCase()];
@@ -1000,35 +1103,29 @@ const ProjectManager = () => {
         const estimatedHours = getField(['Estimated Hours', 'Estimate', 'Hours', 'Time Estimate']);
         const parentName = getField(['Parent', 'Parent Item', 'Parent Task']);
 
-        // Validate and normalize type
         const normalizedType = type ? 
           (type.toLowerCase().includes('epic') ? 'epic' :
            type.toLowerCase().includes('story') ? 'story' :
            type.toLowerCase().includes('subtask') || type.toLowerCase().includes('sub-task') ? 'subtask' :
            'task') : 'task';
 
-        // Validate and normalize status
         const normalizedStatus = status ?
           (status.toLowerCase().includes('review') || status.toLowerCase().includes('done') ? 'review' :
            status.toLowerCase().includes('progress') || status.toLowerCase().includes('active') ? 'in-progress' :
            'pending') : 'pending';
 
-        // Validate and normalize priority
         const normalizedPriority = priority ?
           (priority.toLowerCase().includes('high') || priority.toLowerCase().includes('critical') ? 'high' :
            priority.toLowerCase().includes('medium') || priority.toLowerCase().includes('normal') ? 'medium' :
            'low') : 'medium';
 
-        // Parse dates
         const parseDate = (dateValue) => {
           if (!dateValue) return new Date().toISOString().split('T')[0];
           
           try {
-            // If it's already a Date object from Excel
             if (dateValue instanceof Date) {
               return dateValue.toISOString().split('T')[0];
             }
-            // If it's a string
             const parsed = new Date(dateValue);
             if (!isNaN(parsed.getTime())) {
               return parsed.toISOString().split('T')[0];
@@ -1069,7 +1166,6 @@ const ProjectManager = () => {
         return;
       }
 
-      // Try to match parent-child relationships by name
       mappedItems.forEach(item => {
         if (item.parentName) {
           const parent = mappedItems.find(p => 
@@ -1088,7 +1184,6 @@ const ProjectManager = () => {
       setExcelImportPreview(mappedItems);
       setShowExcelImportModal(true);
       
-      // Clear the file input
       event.target.value = '';
     } catch (error) {
       console.error('Excel import error:', error);
@@ -1099,7 +1194,6 @@ const ProjectManager = () => {
   const confirmExcelImport = async () => {
     if (!selectedProject || !excelImportPreview) return;
 
-    // Clean up the items (remove temporary fields)
     const cleanedItems = excelImportPreview.map(item => {
       const { _excelRow, parentName, ...cleanItem } = item;
       return cleanItem;
@@ -1343,7 +1437,8 @@ const ProjectManager = () => {
       }
 
       const getItemsForDate = (date) => {
-        const dateStr = date.toISOString().split('T')[0];
+        if (!isWorkDay(date)) return [];
+        
         return selectedProject.items.filter(item => {
           const itemStart = new Date(item.startDate);
           const itemEnd = new Date(item.endDate);
@@ -1364,7 +1459,7 @@ const ProjectManager = () => {
       return (
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold">Calendar View</h3>
+            <h3 className="text-lg font-bold">Calendar View (Work Days Only)</h3>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
@@ -1398,6 +1493,21 @@ const ProjectManager = () => {
             </div>
           </div>
 
+          <div className="mb-2 flex gap-4 text-xs">
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 bg-gray-200"></div>
+              <span>Weekend</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 bg-yellow-100"></div>
+              <span>Holiday</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-4 h-4 bg-blue-50 border border-blue-400"></div>
+              <span>Today</span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-7 gap-1">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
               <div key={day} className="text-center text-xs font-semibold text-gray-600 py-2">
@@ -1409,6 +1519,9 @@ const ProjectManager = () => {
               const items = getItemsForDate(date);
               const hasOverdue = items.some(item => isOverdue(item));
               const isCurrentMonth = date.getMonth() === month;
+              const weekend = isWeekend(date);
+              const holiday = isHoliday(date);
+              const holidayName = getHolidayName(date);
               
               return (
                 <div
@@ -1416,20 +1529,40 @@ const ProjectManager = () => {
                   className={`border ${
                     isToday(date) 
                       ? 'bg-blue-50 border-blue-400' 
-                      : isCurrentMonth 
-                        ? 'bg-white border-gray-200' 
-                        : 'bg-gray-50 border-gray-100'
+                      : holiday
+                        ? 'bg-yellow-50 border-yellow-200'
+                        : weekend
+                          ? 'bg-gray-100 border-gray-200'
+                          : isCurrentMonth 
+                            ? 'bg-white border-gray-200' 
+                            : 'bg-gray-50 border-gray-100'
                   } p-2 min-h-[80px] relative`}
                 >
                   <div className={`text-xs font-semibold mb-1 ${
-                    isToday(date) ? 'text-blue-700' : isCurrentMonth ? 'text-gray-700' : 'text-gray-400'
+                    isToday(date) ? 'text-blue-700' : 
+                    holiday ? 'text-yellow-700' :
+                    weekend ? 'text-gray-400' :
+                    isCurrentMonth ? 'text-gray-700' : 'text-gray-400'
                   }`}>
                     {date.getDate()}
                     {hasOverdue && <span className="ml-1 text-red-500">⚠️</span>}
                   </div>
-                  {items.length > 0 && (
+                  
+                  {holiday && (
+                    <div className="text-xs text-yellow-600 font-semibold truncate">
+                      {holidayName}
+                    </div>
+                  )}
+                  
+                  {weekend && !holiday && (
+                    <div className="text-xs text-gray-400">
+                      Weekend
+                    </div>
+                  )}
+                  
+                  {!weekend && !holiday && items.length > 0 && (
                     <div className="space-y-1">
-                      {items.slice(0, 3).map((item, idx) => (
+                      {items.slice(0, 2).map((item, idx) => (
                         <div
                           key={idx}
                           className={`text-xs px-1 py-0.5 rounded truncate ${
@@ -1446,9 +1579,9 @@ const ProjectManager = () => {
                           {getItemIcon(item.type)} {item.name}
                         </div>
                       ))}
-                      {items.length > 3 && (
+                      {items.length > 2 && (
                         <div className="text-xs text-gray-500 text-center">
-                          +{items.length - 3} more
+                          +{items.length - 2} more
                         </div>
                       )}
                     </div>
@@ -1465,7 +1598,6 @@ const ProjectManager = () => {
       const children = items.filter(item => item.parentId === parentId);
       
       return children.map(item => {
-        // Check if this item type should be displayed based on filters
         const shouldDisplay = 
           (item.type === 'epic' && timelineFilters.showEpics) ||
           (item.type === 'story' && timelineFilters.showStories) ||
@@ -1508,7 +1640,6 @@ const ProjectManager = () => {
                 <span className="text-sm text-gray-600">{item.assignee}</span>
               </div>
               <div className="relative h-8 bg-gray-100 rounded">
-                {/* Current day marker */}
                 {getTodayPosition() >= 0 && getTodayPosition() <= 100 && (
                   <div
                     className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10"
@@ -1526,7 +1657,6 @@ const ProjectManager = () => {
                     'bg-gray-400'
                   }`}
                   style={{ left: `${startPos}%`, width: `${width}%` }}
-                >
                 >
                   {width > 15 && (
                     <>
@@ -2044,7 +2174,9 @@ const ProjectManager = () => {
         else totalPending++;
       });
     });
+
     const overdueItems = getOverdueItems();
+
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -2066,9 +2198,9 @@ const ProjectManager = () => {
             <div className="text-xs text-red-600 mt-1">
               {overdueItems.length > 0 && `Needs immediate attention`}
             </div>
-         </div>
+          </div>
         </div>
-        
+
         {/* Overdue Items Section */}
         {overdueItems.length > 0 && (
           <div className="bg-red-50 border border-red-200 rounded-lg p-6">
@@ -2130,6 +2262,7 @@ const ProjectManager = () => {
             </div>
           </div>
         )}
+
         {jiraConfig.connected && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -2150,6 +2283,7 @@ const ProjectManager = () => {
                 ? (project.items.filter(t => t.status === 'review').length / project.items.length) * 100 
                 : 0;
               const projectOverdue = project.items.filter(item => isOverdue(item)).length;
+              
               return (
                 <div 
                   key={project.id} 
@@ -2160,8 +2294,7 @@ const ProjectManager = () => {
                       className="flex-1 cursor-pointer"
                       onClick={() => { setSelectedProject(project); setActiveView('hierarchy'); }}
                     >
-
-                       <h3 className="font-bold text-lg flex items-center gap-2">
+                      <h3 className="font-bold text-lg flex items-center gap-2">
                         {project.name}
                         {projectOverdue > 0 && (
                           <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-normal">
@@ -2226,11 +2359,6 @@ const ProjectManager = () => {
     const stats = getItemStats();
     const syncedItems = selectedProject.items.filter(i => i.jira).length;
     const totalItems = selectedProject.items.length;
-    
-    const filteredItems = filterItems(selectedProject.items);
-    const isSearchActive = searchQuery || searchFilters.assignee || searchFilters.status !== 'all' || 
-                          searchFilters.priority !== 'all' || searchFilters.type !== 'all' || 
-                          searchFilters.dateRange !== 'all';
 
     return (
       <div className="space-y-6">
@@ -2288,311 +2416,12 @@ const ProjectManager = () => {
           </div>
         </div>
 
-        {/* Search and Filter Bar */}
         <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <div className="flex gap-2 items-center mb-3">
-            <div className="flex-1 relative">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by name, assignee, type, or Jira key..."
-                className="w-full border border-gray-300 rounded-lg px-4 py-2 pr-10"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-            <button
-              onClick={() => setShowSearchFilters(!showSearchFilters)}
-              className={`px-4 py-2 rounded-lg border flex items-center gap-2 ${
-                showSearchFilters ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-gray-300 text-gray-700'
-              }`}
-            >
-              <Settings size={18} />
-              Filters
-              {isSearchActive && !searchQuery && (
-                <span className="bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">
-                  Active
-                </span>
-              )}
-            </button>
-            {isSearchActive && (
-              <button
-                onClick={clearSearch}
-                className="px-4 py-2 rounded-lg bg-red-50 border border-red-300 text-red-700 hover:bg-red-100"
-              >
-                Clear All
-              </button>
-            )}
-          </div>
-
-          {/* Filter Options */}
-          {showSearchFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3 pt-3 border-t border-gray-200">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Assignee</label>
-                <select
-                  value={searchFilters.assignee}
-                  onChange={(e) => setSearchFilters({...searchFilters, assignee: e.target.value})}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-                >
-                  <option value="">All Assignees</option>
-                  {getUniqueAssignees().map(assignee => (
-                    <option key={assignee} value={assignee}>{assignee}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Status</label>
-                <select
-                  value={searchFilters.status}
-                  onChange={(e) => setSearchFilters({...searchFilters, status: e.target.value})}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-                >
-                  <option value="all">All Status</option>
-                  <option value="pending">Pending</option>
-                  <option value="in-progress">In Progress</option>
-                  <option value="review">Review</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Priority</label>
-                <select
-                  value={searchFilters.priority}
-                  onChange={(e) => setSearchFilters({...searchFilters, priority: e.target.value})}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-                >
-                  <option value="all">All Priorities</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Type</label>
-                <select
-                  value={searchFilters.type}
-                  onChange={(e) => setSearchFilters({...searchFilters, type: e.target.value})}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-                >
-                  <option value="all">All Types</option>
-                  <option value="epic">📦 Epic</option>
-                  <option value="story">📖 Story</option>
-                  <option value="task">✓ Task</option>
-                  <option value="subtask">○ Subtask</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Due Date</label>
-                <select
-                  value={searchFilters.dateRange}
-                  onChange={(e) => setSearchFilters({...searchFilters, dateRange: e.target.value})}
-                  className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm"
-                >
-                  <option value="all">All Dates</option>
-                  <option value="overdue">Overdue</option>
-                  <option value="today">Due Today</option>
-                  <option value="week">Due This Week</option>
-                  <option value="month">Due This Month</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          {/* Search Results Summary */}
-          {isSearchActive && (
-            <div className="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">
-              <span className="text-sm text-gray-600">
-                Showing <strong>{filteredItems.length}</strong> of <strong>{totalItems}</strong> items
-              </span>
-              <div className="flex gap-2 flex-wrap">
-                {searchFilters.assignee && (
-                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
-                    Assignee: {searchFilters.assignee}
-                  </span>
-                )}
-                {searchFilters.status !== 'all' && (
-                  <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
-                    Status: {searchFilters.status}
-                  </span>
-                )}
-                {searchFilters.priority !== 'all' && (
-                  <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-1 rounded">
-                    Priority: {searchFilters.priority}
-                  </span>
-                )}
-                {searchFilters.type !== 'all' && (
-                
-                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded">
-                    Type: {searchFilters.type}
-                  </span>
-                )}
-                {searchFilters.dateRange !== 'all' && (
-                  <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
-                    Due: {searchFilters.dateRange}
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <h3 className="font-bold mb-4">
-            Hierarchy View
-            {isSearchActive && (
-              <span className="ml-2 text-sm font-normal text-gray-600">
-                (Filtered results shown below)
-              </span>
-            )}
-          </h3>
+          <h3 className="font-bold mb-4">Hierarchy View</h3>
           {selectedProject.items && selectedProject.items.length > 0 ? (
-            filteredItems.length > 0 ? (
-              <div className="space-y-2">
-                {isSearchActive ? (
-                  // Show flat list when searching
-                  filteredItems.map(item => {
-                    const progress = calculateProgress(selectedProject.items, item.id);
-                    const hours = calculateRollupHours(selectedProject.items, item.id);
-                    
-                    // Show parent breadcrumb
-                    const getBreadcrumb = (itemId) => {
-                      const item = selectedProject.items.find(i => i.id === itemId);
-                      if (!item || !item.parentId) return '';
-                      const parent = selectedProject.items.find(i => i.id === item.parentId);
-                      if (!parent) return '';
-                      return getBreadcrumb(parent.id) + parent.name + ' → ';
-                    };
-                    
-                    return (
-                      <div key={item.id} className="border-l-2 border-gray-200">
-                        <div className={`flex items-center gap-2 p-2 hover:bg-gray-50 ${getLevelColor(item.level)} border rounded mb-1`}>
-                          <span className="text-lg">{getItemIcon(item.type)}</span>
-                          
-                          <div className="flex-1">
-                            {getBreadcrumb(item.id) && (
-                              <div className="text-xs text-gray-500 mb-1">
-                                {getBreadcrumb(item.id)}
-                              </div>
-                            )}
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold">{item.name}</span>
-                              {item.jira ? (
-                                <a 
-                                  href={item.jira.issueUrl} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer"
-                                  className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded font-semibold hover:bg-purple-200 flex items-center gap-1"
-                                  onClick={(e) => e.stopPropagation()}
-                                  title="View in Jira"
-                                >
-                                  {item.jira.issueKey}
-                                  <ExternalLink size={12} />
-                                </a>
-                              ) : jiraConfig.connected && (
-                                <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded" title="Not synced to Jira">
-                                  Not in Jira
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-xs text-gray-600">
-                              {item.assignee} • {hours.actual}h / {hours.estimated}h • {Math.round(progress)}% complete • Due: {new Date(item.endDate).toLocaleDateString()}
-                            </div>
-                          </div>
-                          
-                          <select
-                            value={item.status}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              updateItemStatus(selectedProject.id, item.id, e.target.value);
-                            }}
-                            className={`px-2 py-1 rounded text-xs font-semibold border-0 ${
-                              item.status === 'review' ? 'bg-green-100 text-green-700' :
-                              item.status === 'in-progress' ? 'bg-blue-100 text-blue-700' :
-                              'bg-gray-100 text-gray-700'
-                            }`}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <option value="pending">Pending</option>
-                            <option value="in-progress">In Progress</option>
-                            <option value="review">Review</option>
-                          </select>
-                          
-                          <div className="flex gap-1">
-                            {!item.jira && jiraConfig.connected && (
-                              <button 
-                                onClick={(e) => { 
-                                  e.stopPropagation();
-                                  syncItemToJira(item);
-                                }} 
-                                className="text-purple-600 hover:text-purple-800 p-1"
-                                title="Sync to Jira"
-                              >
-                                <Link2 size={16} />
-                              </button>
-                            )}
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation();
-                                setEditingItem({...item}); 
-                                setShowEditItemModal(true); 
-                              }} 
-                              className="text-blue-600 hover:text-blue-800 p-1"
-                              title="Edit item"
-                            >
-                              <Settings size={16} />
-                            </button>
-                            <button 
-                              onClick={(e) => { 
-                                e.stopPropagation();
-                                setSelectedItem(item); 
-                                setShowItemDetailsModal(true); 
-                              }} 
-                              className="text-green-600 hover:text-green-800 p-1"
-                              title="View details & comments"
-                            >
-                              <MessageSquare size={16} />
-                            </button>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (confirm('Are you sure you want to delete this item and all its children?')) {
-                                  deleteItem(selectedProject.id, item.id);
-                                }
-                              }} 
-                              className="text-red-600 hover:text-red-800 p-1"
-                              title="Delete item"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  // Show hierarchy when not searching
-                  renderHierarchyTree(selectedProject.items, null, 0)
-                )}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500">
-                <p className="text-lg mb-2">No items match your search</p>
-                <p className="text-sm">Try adjusting your filters or search query</p>
-                <button
-                  onClick={clearSearch}
-                  className="mt-3 text-blue-600 hover:text-blue-800 text-sm font-semibold"
-                >
-                  Clear all filters
-                </button>
-              </div>
-            )
+            <div className="space-y-2">
+              {renderHierarchyTree(selectedProject.items, null, 0)}
+            </div>
           ) : (
             <div className="text-center py-8 text-gray-500">
               <p>No items yet. Click "Add Item" to create your first epic, story, or task.</p>
@@ -2623,7 +2452,7 @@ const ProjectManager = () => {
               )}
             </h1>
             <div className="text-xs text-gray-500 mt-1">
-              Multi-Level Hierarchy • Advanced Analytics • Search & Filter
+              Multi-Level Hierarchy • Advanced Analytics
               {lastSyncTime && ` • Last sync: ${new Date(lastSyncTime).toLocaleTimeString()}`}
             </div>
           </div>
@@ -2693,7 +2522,7 @@ const ProjectManager = () => {
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${activeView === 'timeline' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'}`}
           >
             <Calendar size={18} />
-            Charts
+            Timeline
           </button>
           <button
             onClick={() => setActiveView('charts')}
@@ -3036,79 +2865,11 @@ const ProjectManager = () => {
       )}
 
       {/* Edit Item Modal */}
-      {showEditItemModal && editingItem && selectedProject && (
+      {showEditItemModal && editingItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Edit Item</h2>
             <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold mb-2">Type</label>
-                <div className="flex gap-2">
-                  {['epic', 'story', 'task', 'subtask'].map(type => (
-                    <button
-                      key={type}
-                      onClick={() => {
-                        setEditingItem({...editingItem, type});
-                        setDateValidationError('');
-                      }}
-                      className={`flex-1 px-3 py-2 rounded border text-sm ${
-                        editingItem.type === type 
-                          ? 'bg-blue-600 text-white border-blue-600' 
-                          : 'bg-white text-gray-700 border-gray-300'
-                      }`}
-                    >
-                      {getItemIcon(type)} {type.charAt(0).toUpperCase() + type.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold mb-1">Parent Item (Optional)</label>
-                <select
-                  value={editingItem.parentId || ''}
-                  onChange={(e) => {
-                    const parentId = e.target.value ? parseInt(e.target.value) : null;
-                    setEditingItem({...editingItem, parentId});
-                    if (editingItem.startDate && editingItem.endDate) {
-                      const error = validateDates(editingItem.startDate, editingItem.endDate, parentId);
-                      setDateValidationError(error || '');
-                    }
-                  }}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                >
-                  <option value="">None (Top Level)</option>
-                  {selectedProject.items
-                    .filter(item => {
-                      if (item.id === editingItem.id) return false;
-                      
-                      if (editingItem.type === 'epic') return false;
-                      if (editingItem.type === 'story') return item.type === 'epic';
-                      if (editingItem.type === 'task') return item.type === 'story';
-                      if (editingItem.type === 'subtask') return item.type === 'task';
-                      return false;
-                    })
-                    .map(item => {
-                      let displayName = item.name;
-                      if (item.type === 'story' || item.type === 'task') {
-                        const parentItem = selectedProject.items.find(i => i.id === item.parentId);
-                        if (parentItem) {
-                          displayName = `${item.name} (under ${parentItem.name})`;
-                        }
-                      }
-                      return (
-                        <option key={item.id} value={item.id}>
-                          {getItemIcon(item.type)} {displayName}
-                        </option>
-                      );
-                    })
-                  }
-                </select>
-                {editingItem.parentId && selectedProject.items.find(i => i.id === editingItem.parentId) && (
-                  <p className="text-xs text-blue-600 mt-1">
-                    📅 Parent dates: {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).startDate).toLocaleDateString()} - {new Date(selectedProject.items.find(i => i.id === editingItem.parentId).endDate).toLocaleDateString()}
-                  </p>
-                )}
-              </div>
               <div>
                 <label className="block text-sm font-semibold mb-1">Item Name</label>
                 <input
@@ -3165,7 +2926,7 @@ const ProjectManager = () => {
                       setEditingItem({ ...editingItem, startDate: e.target.value });
                       if (editingItem.endDate) {
                         const error = validateDates(e.target.value, editingItem.endDate, editingItem.parentId);
-                        setDateValidationError(error || '');
+                        setEditDateValidationError(error || '');
                       }
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2"
@@ -3180,16 +2941,26 @@ const ProjectManager = () => {
                       setEditingItem({ ...editingItem, endDate: e.target.value });
                       if (editingItem.startDate) {
                         const error = validateDates(editingItem.startDate, e.target.value, editingItem.parentId);
-                        setDateValidationError(error || '');
+                        setEditDateValidationError(error || '');
                       }
                     }}
                     className="w-full border border-gray-300 rounded px-3 py-2"
                   />
                 </div>
               </div>
-              {dateValidationError && (
+              {editDateValidationError && (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-                  ⚠️ {dateValidationError}
+                  ⚠️ {editDateValidationError}
+                </div>
+              )}
+              {editingItem.parentId && selectedProject && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-xs text-blue-800">
+                    Parent: {selectedProject.items.find(i => i.id === editingItem.parentId)?.name}
+                  </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    Parent dates: {new Date(selectedProject.items.find(i => i.id === editingItem.parentId)?.startDate).toLocaleDateString()} - {new Date(selectedProject.items.find(i => i.id === editingItem.parentId)?.endDate).toLocaleDateString()}
+                  </p>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3">
@@ -3214,21 +2985,6 @@ const ProjectManager = () => {
                   />
                 </div>
               </div>
-              {editingItem.jira && (
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-purple-900">🔗 Synced with Jira</span>
-                    <a 
-                      href={editingItem.jira.issueUrl} 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-xs text-purple-700 hover:underline"
-                    >
-                      {editingItem.jira.issueKey}
-                    </a>
-                  </div>
-                </div>
-              )}
             </div>
             <div className="flex gap-2 mt-6">
               <button
@@ -3241,7 +2997,7 @@ const ProjectManager = () => {
                 onClick={() => {
                   setShowEditItemModal(false);
                   setEditingItem(null);
-                  setDateValidationError('');
+                  setEditDateValidationError('');
                 }}
                 className="flex-1 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
               >
@@ -3372,7 +3128,7 @@ const ProjectManager = () => {
       {/* Jira Settings Modal */}
       {showJiraSettingsModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">Jira Integration Settings</h2>
             
             {jiraConfig.connected ? (
@@ -3402,44 +3158,42 @@ const ProjectManager = () => {
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
                     <p className="text-amber-900 font-semibold mb-2">⚠️ Backend Required</p>
                     <p className="text-sm text-amber-800">
-                      Jira integration requires the backend server to avoid CORS issues. 
-                      Please connect to the backend first using the "Backend" button in the header.
+                      Jira integration requires the backend server. Please connect to the backend first.
                     </p>
                   </div>
                 )}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm">
-                  <p className="text-blue-900 mb-2"><strong>How to connect:</strong></p>
-                  <ol className="text-blue-800 space-y-1 list-decimal list-inside text-xs">
-                    <li>Connect to backend server first (header button)</li>
-                    <li>Go to your Jira account settings</li>
-                    <li>Navigate to Security → API tokens</li>
-                    <li>Click "Create API token"</li>
-                    <li>Copy and paste below</li>
-                  </ol>
-                </div>
-
-                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4 text-sm">
-                  <p className="text-purple-900 mb-2"><strong>How sync works:</strong></p>
-                  <ul className="text-purple-800 space-y-1 text-xs">
-                    <li>✓ Epic → Jira Epic</li>
-                    <li>✓ Story → Jira Story</li>
-                    <li>✓ Task → Jira Task</li>
-                    <li>✓ Subtask → Jira Sub-task</li>
-                    <li>✓ Status updates sync automatically</li>
-                    <li>✓ Use checkbox when creating items</li>
-                  </ul>
-                </div>
 
                 <div>
                   <label className="block text-sm font-semibold mb-1">Jira URL</label>
-                  <input
-                    type="text"
-                    value={jiraConfig.url}
-                    onChange={(e) => setJiraConfig({ ...jiraConfig, url: e.target.value })}
-                    className="w-full border border-gray-300 rounded px-3 py-2"
-                    placeholder="https://yourcompany.atlassian.net"
-                  />
+                  <select
+                    value={selectedJiraUrl}
+                    onChange={(e) => {
+                      setSelectedJiraUrl(e.target.value);
+                      if (e.target.value !== 'custom') {
+                        setCustomJiraUrl('');
+                      }
+                    }}
+                    className="w-full border border-gray-300 rounded px-3 py-2 mb-2"
+                  >
+                    <option value="">Select Jira Instance</option>
+                    {predefinedJiraUrls.map(url => (
+                      <option key={url.value} value={url.value}>
+                        {url.label}
+                      </option>
+                    ))}
+                  </select>
+                  
+                  {selectedJiraUrl === 'custom' && (
+                    <input
+                      type="text"
+                      value={customJiraUrl}
+                      onChange={(e) => setCustomJiraUrl(e.target.value)}
+                      className="w-full border border-gray-300 rounded px-3 py-2"
+                      placeholder="https://your-company.atlassian.net"
+                    />
+                  )}
                 </div>
+
                 <div>
                   <label className="block text-sm font-semibold mb-1">Email</label>
                   <input
@@ -3450,38 +3204,65 @@ const ProjectManager = () => {
                     placeholder="your.email@company.com"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-sm font-semibold mb-1">API Token</label>
+                  <label className="block text-sm font-semibold mb-1">API Token (Bearer Token)</label>
                   <input
                     type="password"
                     value={jiraConfig.apiToken}
                     onChange={(e) => setJiraConfig({ ...jiraConfig, apiToken: e.target.value })}
                     className="w-full border border-gray-300 rounded px-3 py-2"
-                    placeholder="Enter your API token"
+                    placeholder="Enter your Bearer token"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold mb-1">Project Key</label>
-                  <input
-                    type="text"
-                    value={jiraConfig.defaultProject}
-                    onChange={(e) => setJiraConfig({ ...jiraConfig, defaultProject: e.target.value })}
-                    className="w-full border border-gray-300 rounded px-3 py-2"
-                    placeholder="e.g., PROJ, TEAM"
-                  />
+                  <p className="text-xs text-gray-600 mt-1">
+                    Use your Personal Access Token (PAT) or API token
+                  </p>
                 </div>
 
                 <button
-                  onClick={connectToJira}
-                  disabled={!useBackend || !backendConnected}
+                  onClick={testJiraConnection}
+                  disabled={!useBackend || !backendConnected || testingConnection}
                   className={`w-full px-4 py-2 rounded-lg ${
-                    useBackend && backendConnected
+                    useBackend && backendConnected && !testingConnection
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  {testingConnection ? 'Testing Connection...' : 'Test Connection & Get Projects'}
+                </button>
+
+                {jiraProjects.length > 0 && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <label className="block text-sm font-semibold mb-2 text-green-900">
+                      Select Project
+                    </label>
+                    <select
+                      value={jiraConfig.defaultProject}
+                      onChange={(e) => setJiraConfig({ ...jiraConfig, defaultProject: e.target.value })}
+                      className="w-full border border-green-300 rounded px-3 py-2"
+                    >
+                      <option value="">Choose a project...</option>
+                      {jiraProjects.map(project => (
+                        <option key={project.key} value={project.key}>
+                          {project.key} - {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <button
+                  onClick={connectToJira}
+                  disabled={!jiraConfig.defaultProject || !jiraProjects.length}
+                  className={`w-full px-4 py-2 rounded-lg ${
+                    jiraConfig.defaultProject && jiraProjects.length
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                   }`}
                 >
                   Connect to Jira
                 </button>
+
                 {!useBackend && (
                   <p className="text-xs text-center text-amber-600">
                     Enable backend connection first
@@ -3491,7 +3272,12 @@ const ProjectManager = () => {
             )}
 
             <button
-              onClick={() => setShowJiraSettingsModal(false)}
+              onClick={() => {
+                setShowJiraSettingsModal(false);
+                setJiraProjects([]);
+                setSelectedJiraUrl('');
+                setCustomJiraUrl('');
+              }}
               className="w-full mt-3 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300"
             >
               Close
@@ -3603,7 +3389,7 @@ const ProjectManager = () => {
         </div>
       )}
 
-      {/* Jira Import Modal */}
+      {/* Import from Jira Modal */}
       {showImportModal && importPreview && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -3727,7 +3513,7 @@ const ProjectManager = () => {
                     <h3 className="font-semibold text-blue-900 mb-2">Setup Instructions</h3>
                     <ol className="text-sm text-blue-800 space-y-2 list-decimal list-inside">
                       <li>Create server.js with Express + any database (lowdb, SQLite, MongoDB, etc.)</li>
-                      <li>Install: npm install express cors [your-db-library]</li>
+                      <li>Install: npm install express cors lowdb@1.0.0 axios date-holidays</li>
                       <li>Run: node server.js</li>
                       <li>Server starts on port 3001</li>
                       <li>Enter server URL below and connect</li>
@@ -3739,6 +3525,7 @@ const ProjectManager = () => {
                         <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">GET /api/projects</span> - Get all projects</div>
                         <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">PUT /api/projects/:id</span> - Create/update project</div>
                         <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">DELETE /api/projects/:id</span> - Delete project</div>
+                        <div><span className="font-mono bg-gray-100 px-2 py-1 rounded">GET /api/holidays/:year</span> - Get holidays</div>
                       </div>
                       <p className="text-xs text-blue-800 mt-2">
                         💡 PUT endpoint should check if project exists by ID, then update or create accordingly
@@ -3756,7 +3543,7 @@ const ProjectManager = () => {
                       placeholder="http://localhost:3001/api"
                     />
                     <p className="text-xs text-gray-600 mt-1">
-                      For team access, use: http://YOUR-IP-ADDRESS:3001/apif
+                      For team access, use: http://YOUR-IP-ADDRESS:3001/api
                     </p>
                   </div>
 
